@@ -464,18 +464,20 @@ function extractUserCommentFromJPEG(file) {
 
 function extractUserCommentFromWebp(file) {
     getWebpExifData(file, function (exifData) {
-        console.log('WEBP EXIF DATA:', exifData);
-        let candidates = [];
+        // Only consider "Make" (EXIF tag 271) for JSON parsing, skip ImageDescription (EXIF tag 270)
+        let candidate = null;
         if (exifData) {
-            for (const key in exifData) {
-                if (typeof exifData[key] === 'string' && exifData[key].trim()) {
-                    candidates.push(exifData[key]);
-                }
+            // Try string key first
+            if (typeof exifData["Make"] === 'string' && exifData["Make"].trim()) {
+                candidate = exifData["Make"];
+            }
+            // Fallback: try numeric key 271
+            else if (typeof exifData[271] === 'string' && exifData[271].trim()) {
+                candidate = exifData[271];
             }
         }
         let found = false;
-        // Try to parse as JSON (like PNG)
-        for (const candidate of candidates) {
+        if (candidate) {
             let jsonStr = candidate.trim();
             // If the string starts with "Prompt:" or "Workflow:", strip that prefix
             if (jsonStr.startsWith("Prompt:")) {
@@ -511,12 +513,11 @@ function extractUserCommentFromWebp(file) {
                 }
                 clearWarning();
                 found = true;
-                break;
             }
         }
         if (!found) {
-            // Fallback: treat UserComment or Make as prompt string
-            let comment = getWebpExifTag(exifData, "UserComment") || getWebpExifTag(exifData, "Make");
+            // Fallback: treat UserComment as prompt string
+            let comment = getWebpExifTag(exifData, "UserComment");
             if (comment && comment.trim()) {
                 clearWarning();
                 parseAndDisplayUserComment(comment);
