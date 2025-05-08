@@ -60,7 +60,7 @@ function findTiffHeader(view) {
 function parseExif(view, start) {
     const tiffOffset = start;
     const tiffMarker = view.getUint16(tiffOffset, false);
-    // console.log('TIFF marker at offset', tiffOffset, ':', tiffMarker.toString(16));
+    console.log('TIFF marker at offset', tiffOffset, ':', tiffMarker.toString(16));
     const littleEndian = tiffMarker === 0x4949;
     const getUint16 = (o) => view.getUint16(o, littleEndian);
     const getUint32 = (o) => view.getUint32(o, littleEndian);
@@ -159,23 +159,23 @@ function getWebpExifData(file, callback) {
                 bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]
             );
             const chunkSize = bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24);
-            // console.log('Found chunk:', chunkType, 'at offset', offset, 'size', chunkSize);
-            // console.log('Checking chunk:', chunkType, 'at offset', offset);
+            console.log('Found chunk:', chunkType, 'at offset', offset, 'size', chunkSize);
+            console.log('Checking chunk:', chunkType, 'at offset', offset);
             if (chunkType === "EXIF") {
                 const exifStart = offset + 8;
                 // Always create a DataView for the EXIF chunk (do NOT require "Exif\0\0")
                 const view = new DataView(bytes.buffer, exifStart, chunkSize);
-                // console.log('EXIF chunk found at', exifStart, 'first 16 bytes:', Array.from({length: 16}, (_,i) => bytes[exifStart + i]));
-                // console.log('First 16 bytes of EXIF chunk (DataView):', Array.from({length: 16}, (_,i) => view.getUint8(i)));
+                console.log('EXIF chunk found at', exifStart, 'first 16 bytes:', Array.from({length: 16}, (_,i) => bytes[exifStart + i]));
+                console.log('First 16 bytes of EXIF chunk (DataView):', Array.from({length: 16}, (_,i) => view.getUint8(i)));
                 // Scan for TIFF header (0x4949 or 0x4d4d)
                 let tiffOffset = findTiffHeader(view);
                 if (tiffOffset === -1) {
-                    // console.log('TIFF header not found in EXIF chunk');
+                    console.log('TIFF header not found in EXIF chunk');
                     callback(null);
                     return;
                 }
                 const exifData = parseExif(view, tiffOffset);
-                // console.log('TIFF header found at offset', tiffOffset);
+                console.log('TIFF header found at offset', tiffOffset);
                 callback(exifData || {});
                 return;
             }
@@ -464,7 +464,7 @@ function extractUserCommentFromJPEG(file) {
 
 function extractUserCommentFromWebp(file) {
     getWebpExifData(file, function (exifData) {
-        // console.log('WEBP EXIF DATA:', exifData);
+        console.log('WEBP EXIF DATA:', exifData);
         let candidates = [];
         if (exifData) {
             for (const key in exifData) {
