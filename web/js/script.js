@@ -14,7 +14,7 @@ const warningSpan = document.getElementById('warning');
 // --- EXIF parser ---
 function getExifData(file, callback) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const view = new DataView(e.target.result);
         let offset = 2; // Skip SOI marker
         let exifData = null;
@@ -34,7 +34,7 @@ function getExifData(file, callback) {
                     view.getUint8(offset + 8) === 0x00 &&
                     view.getUint8(offset + 9) === 0x00
                 ) {
-                    exifData = parseExif(view, offset + 10, length - 8);
+                    exifData = parseExif(view, offset + 10);
                     break;
                 }
             }
@@ -45,14 +45,27 @@ function getExifData(file, callback) {
     reader.readAsArrayBuffer(file);
 }
 
+// Scan for TIFF header (0x4949 or 0x4d4d)
+function findTiffHeader(view) {
+    for (let i = 0; i < view.byteLength - 1; i++) {
+        const marker = view.getUint16(i, false);
+        if (marker === 0x4949 || marker === 0x4d4d) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // Parse EXIF data from DataView starting at offset
-function parseExif(view, start, length) {
+function parseExif(view, start) {
     const tiffOffset = start;
-    const littleEndian = view.getUint16(tiffOffset, false) === 0x4949;
+    const tiffMarker = view.getUint16(tiffOffset, false);
+    // console.log('TIFF marker at offset', tiffOffset, ':', tiffMarker.toString(16));
+    const littleEndian = tiffMarker === 0x4949;
     const getUint16 = (o) => view.getUint16(o, littleEndian);
     const getUint32 = (o) => view.getUint32(o, littleEndian);
 
-    if (getUint16(tiffOffset) !== 0x4949 && getUint16(tiffOffset) !== 0x4D4D) return {};
+    if (tiffMarker !== 0x4949 && tiffMarker !== 0x4D4D) return {};
 
     const firstIFDOffset = getUint32(tiffOffset + 4);
     let tags = {};
@@ -64,7 +77,11 @@ function parseExif(view, start, length) {
 
     const tagNames = {
         0x9286: "UserComment",
-        // ... other tags ...
+        0x010E: "ImageDescription",
+        0x010F: "Make",
+        0x271: "Prompt",
+        0x270: "Workflow"
+        // ... add more if needed
     };
     let namedTags = {};
     for (const tag in tags) {
@@ -130,7 +147,7 @@ function getExifTag(exifData, tagName) {
 // --- WEBP Parser ---
 function getWebpExifData(file, callback) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const bytes = new Uint8Array(e.target.result);
         // Check RIFF header
         if (bytes[0] !== 0x52 || bytes[1] !== 0x49 || bytes[2] !== 0x46 || bytes[3] !== 0x46) {
@@ -139,23 +156,28 @@ function getWebpExifData(file, callback) {
         let offset = 12; // Skip RIFF header and "WEBP"
         while (offset + 8 < bytes.length) {
             const chunkType = String.fromCharCode(
-                bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]
+                bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]
             );
-            const chunkSize = bytes[offset+4] | (bytes[offset+5]<<8) | (bytes[offset+6]<<16) | (bytes[offset+7]<<24);
+            const chunkSize = bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24);
+            // console.log('Found chunk:', chunkType, 'at offset', offset, 'size', chunkSize);
+            // console.log('Checking chunk:', chunkType, 'at offset', offset);
             if (chunkType === "EXIF") {
-                // The EXIF chunk starts with "Exif\0\0", then standard EXIF data
                 const exifStart = offset + 8;
-                if (
-                    bytes[exifStart] === 0x45 && bytes[exifStart+1] === 0x78 &&
-                    bytes[exifStart+2] === 0x69 && bytes[exifStart+3] === 0x66 &&
-                    bytes[exifStart+4] === 0x00 && bytes[exifStart+5] === 0x00
-                ) {
-                    // Use the same parseExif as for JPEG, skipping "Exif\0\0"
-                    const view = new DataView(bytes.buffer, exifStart + 6, chunkSize - 6);
-                    const exifData = parseExif(view, 0, chunkSize - 6);
-                    callback(exifData || {});
+                // Always create a DataView for the EXIF chunk (do NOT require "Exif\0\0")
+                const view = new DataView(bytes.buffer, exifStart, chunkSize);
+                // console.log('EXIF chunk found at', exifStart, 'first 16 bytes:', Array.from({length: 16}, (_,i) => bytes[exifStart + i]));
+                // console.log('First 16 bytes of EXIF chunk (DataView):', Array.from({length: 16}, (_,i) => view.getUint8(i)));
+                // Scan for TIFF header (0x4949 or 0x4d4d)
+                let tiffOffset = findTiffHeader(view);
+                if (tiffOffset === -1) {
+                    // console.log('TIFF header not found in EXIF chunk');
+                    callback(null);
                     return;
                 }
+                const exifData = parseExif(view, tiffOffset);
+                // console.log('TIFF header found at offset', tiffOffset);
+                callback(exifData || {});
+                return;
             }
             offset += 8 + chunkSize + (chunkSize % 2); // Chunks are padded to even sizes
         }
@@ -327,7 +349,7 @@ function isSupportedImage(file) {
 
 function displayImagePreview(file) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         imagePreview.src = e.target.result;
         imagePreview.style.display = 'block';
     };
@@ -353,9 +375,9 @@ function extractAndDisplayMetadata(file) {
 
     // Get image dimensions
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const img = new Image();
-        img.onload = function() {
+        img.onload = function () {
             basicMetadata.push({ label: 'Width', value: img.width + ' px' });
             basicMetadata.push({ label: 'Height', value: img.height + ' px' });
 
@@ -390,7 +412,7 @@ function formatBytes(bytes) {
 // --- Minimal EXIF extraction for JPEG/WEBP (only a few fields, no library) ---
 function extractExifMetadata(file) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const view = new DataView(e.target.result);
 
         // Check for JPEG EXIF header (0xFFD8)
@@ -420,7 +442,7 @@ function extractExifMetadata(file) {
 
 // --- Read JPEG and WEBP metadata for UserComment with parsing ---
 function extractUserCommentFromJPEG(file) {
-    getExifData(file, function(exifData) {
+    getExifData(file, function (exifData) {
         let userComment = getExifTag(exifData, "UserComment");
         let makeComment = getExifTag(exifData, "Make");
         let comment = null;
@@ -441,27 +463,30 @@ function extractUserCommentFromJPEG(file) {
 }
 
 function extractUserCommentFromWebp(file) {
-    getWebpExifData(file, function(exifData) {
-        let userComment = getWebpExifTag(exifData, "UserComment");
-        let makeComment = getWebpExifTag(exifData, "Make");
-        let comment = null;
-
-        // Prefer UserComment, fallback to Make if not present
-        if (userComment && typeof userComment === 'string' && userComment.trim() !== '') {
-            comment = userComment;
-        } else if (makeComment && typeof makeComment === 'string' && makeComment.trim() !== '') {
-            comment = makeComment;
+    getWebpExifData(file, function (exifData) {
+        // console.log('WEBP EXIF DATA:', exifData);
+        let candidates = [];
+        if (exifData) {
+            for (const key in exifData) {
+                if (typeof exifData[key] === 'string' && exifData[key].trim()) {
+                    candidates.push(exifData[key]);
+                }
+            }
         }
-
-        if (comment) {
-            // Try to parse as JSON (like PNG)
+        let found = false;
+        // Try to parse as JSON (like PNG)
+        for (const candidate of candidates) {
+            let jsonStr = candidate.trim();
+            // If the string starts with "Prompt:" or "Workflow:", strip that prefix
+            if (jsonStr.startsWith("Prompt:")) {
+                jsonStr = jsonStr.substring("Prompt:".length).trim();
+            } else if (jsonStr.startsWith("Workflow:")) {
+                jsonStr = jsonStr.substring("Workflow:".length).trim();
+            }
             let parsed = null;
             try {
-                parsed = JSON.parse(comment);
-            } catch (err) {
-                // Not JSON, treat as plain text
-            }
-
+                parsed = JSON.parse(jsonStr);
+            } catch (err) { }
             if (parsed && typeof parsed === 'object') {
                 // 1. Find first "populated_text" value for positive prompt
                 const populatedText = findFirstKeyValue(parsed, 'populated_text');
@@ -469,7 +494,6 @@ function extractUserCommentFromWebp(file) {
                     positivePrompt.value = populatedText || '';
                     autoResizeTextarea(positivePrompt);
                 }
-
                 // 2. Find all "wildcard_text" values for #additional-prompts
                 const wildcardTexts = [];
                 collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
@@ -478,23 +502,27 @@ function extractUserCommentFromWebp(file) {
                     additionalPromptsTextarea.value = wildcardTexts.join('\n');
                     autoResizeTextarea(additionalPromptsTextarea);
                 }
-
-                // 3. Collect allowed keys for prompt-info-list
+                // 3. Collect allowed keys for prompt-info-list (also handle nested "inputs" and primitives)
                 if (promptInfoList) {
                     promptInfoList.innerHTML = '';
-                    collectAllowedKeys(parsed, (key, value) => {
+                    collectPromptInfo(parsed, (key, value) => {
                         addMetadataItem(key, value, promptInfoList);
                     });
                 }
-
                 clearWarning();
-            } else {
-                // Fallback: treat as prompt string
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            // Fallback: treat UserComment or Make as prompt string
+            let comment = getWebpExifTag(exifData, "UserComment") || getWebpExifTag(exifData, "Make");
+            if (comment && comment.trim()) {
                 clearWarning();
                 parseAndDisplayUserComment(comment);
+            } else {
+                showWarning('❌ No metadata found');
             }
-        } else {
-            showWarning('❌ No metadata found');
         }
     });
 }
@@ -502,7 +530,7 @@ function extractUserCommentFromWebp(file) {
 // --- PNG metadata extraction ---
 function extractPngMetadata(file) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const arrayBuffer = e.target.result;
         // Convert ArrayBuffer to binary string for PNGMetadata
         let binary = '';
@@ -525,8 +553,10 @@ function extractPngMetadata(file) {
                             const keyword = raw.substring(0, sepIdx);
                             const text = raw.substring(sepIdx + 1);
 
-                            // Only process if keyword is "prompt"
-                            if (keyword.toLowerCase() === "prompt") {
+                            // Process if keyword is "prompt", "parameters", or "UserComment"
+                            if (
+                                ["prompt", "parameters", "usercomment"].includes(keyword.toLowerCase())
+                            ) {
                                 let promptText = text;
 
                                 // Try to parse as JSON
@@ -554,15 +584,20 @@ function extractPngMetadata(file) {
                                         autoResizeTextarea(additionalPromptsTextarea);
                                     }
 
-                                    // 3. Collect allowed keys for prompt-info-list
+                                    // 3. Collect allowed keys for prompt-info-list (robust: handle nested "inputs" and only primitives)
                                     if (promptInfoList) {
                                         promptInfoList.innerHTML = '';
-                                        collectAllowedKeys(parsed, (key, value) => {
+                                        collectPromptInfo(parsed, (key, value) => {
                                             addMetadataItem(key, value, promptInfoList);
                                         });
                                     }
 
                                     clearWarning();
+                                    found = true;
+                                } else {
+                                    // Fallback: treat as prompt string
+                                    clearWarning();
+                                    parseAndDisplayUserComment(promptText);
                                     found = true;
                                 }
                             }
@@ -608,19 +643,33 @@ function collectAllKeyValues(obj, targetKey, resultArr) {
     }
 }
 
-// Helper: Collect allowed keys and their values for prompt-info-list
-function collectAllowedKeys(obj, cb) {
-    const allowedKeys = ['model_name', 'sampler_name', 'scheduler', 'vae_name', 'text', 'ckpt', 'ckpt_name', 'lora', 'lora_01', 'lora_02', 'lora_03', 'lora_04', 'lora_05', 'lora_06', 'checkpoint', 'vae', 'lora_name'];
+// Helper: Collect prompt info for prompt-info-list (robust: handle nested "inputs" and only primitives)
+function collectPromptInfo(obj, cb) {
     if (typeof obj !== 'object' || obj === null) return;
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            collectPromptInfo(item, cb);
+        }
+        return;
+    }
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
-        if (allowedKeys.includes(key) && typeof obj[key] === 'string') {
-            // Don't include "populated_text" (already handled)
-            if (key !== 'populated_text') {
+        if (key === 'inputs' && typeof obj[key] === 'object' && obj[key] !== null) {
+            for (const subKey in obj[key]) {
+                if (obj[key].hasOwnProperty(subKey)) {
+                    const value = obj[key][subKey];
+                    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                        cb(subKey, value);
+                    }
+                }
+            }
+        } else if (typeof obj[key] === 'string' || typeof obj[key] === 'number' || typeof obj[key] === 'boolean') {
+            // Only show primitive values, skip objects/arrays
+            if (key !== 'populated_text' && key !== 'wildcard_text') {
                 cb(key, obj[key]);
             }
         } else if (typeof obj[key] === 'object') {
-            collectAllowedKeys(obj[key], cb);
+            collectPromptInfo(obj[key], cb);
         }
     }
 }
@@ -639,15 +688,12 @@ function parseAndDisplayUserComment(comment) {
     if (comment.startsWith('UNICODE')) {
         comment = comment.substring('UNICODE'.length).trim();
     }
-
     // Find "Negative prompt:" and "Steps:"
     const negPromptIdx = comment.indexOf('Negative prompt:');
     const stepsIdx = comment.indexOf('Steps:');
-
     let positive = '';
     let negative = '';
     let additional = '';
-
     if (negPromptIdx !== -1) {
         positive = comment.substring(0, negPromptIdx).trim();
         if (stepsIdx !== -1 && stepsIdx > negPromptIdx) {
@@ -665,7 +711,6 @@ function parseAndDisplayUserComment(comment) {
             positive = comment.trim();
         }
     }
-
     // Remove Template: "..." and Hires prompt: "..." and any text within the double quotes (including the quotes)
     if (additional) {
         // This regex matches: Template: " ... " or Hires prompt: " ... " (including any content inside the quotes, non-greedy)
@@ -674,7 +719,6 @@ function parseAndDisplayUserComment(comment) {
         // Remove any accidental double commas or leading/trailing commas/spaces
         additional = additional.replace(/,{2,}/g, ',').replace(/^[,\s]+|[,\s]+$/g, '');
     }
-
     // Set textareas and auto-resize after setting value
     if (positivePrompt) {
         positivePrompt.value = positive;
@@ -684,7 +728,6 @@ function parseAndDisplayUserComment(comment) {
         negativePrompt.value = negative;
         autoResizeTextarea(negativePrompt);
     }
-
     // Fill prompt info list using addMetadataItem for consistent formatting
     if (promptInfoList) {
         promptInfoList.innerHTML = '';
@@ -745,6 +788,7 @@ function addMetadataItem(label, value, listElement) {
     }
     (listElement || metadataList).appendChild(li);
 }
+
 // Auto-resize a textarea to fit its content.
 function autoResizeTextarea(textarea) {
     if (!textarea) return;
@@ -753,7 +797,6 @@ function autoResizeTextarea(textarea) {
 }
 
 // Show a warning message in #warning span.
-
 function showWarning(msg) {
     if (warningSpan) {
         warningSpan.textContent = msg;
@@ -768,9 +811,10 @@ function clearWarning() {
         warningSpan.style.display = 'none';
     }
 }
+
 // Copy textarea text using the modern clipboard API and show feedback in the .btn-label.
 document.querySelectorAll('.copy-btn').forEach(btn => {
-    btn.addEventListener('click', async function() {
+    btn.addEventListener('click', async function () {
         const targetId = btn.getAttribute('data-target');
         const textarea = document.getElementById(targetId);
         const label = btn.parentElement.querySelector('.btn-label');
@@ -782,6 +826,7 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
                     label.style.opacity = '1';
                     label.style.transition = 'opacity 0.5s';
                     void label.offsetWidth;
+
                     setTimeout(() => {
                         label.style.opacity = '0';
                         setTimeout(() => {
@@ -793,12 +838,10 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
             }
             try {
                 await navigator.clipboard.writeText(textarea.value);
-
                 if (label) {
                     label.textContent = 'Copied!';
                     label.style.opacity = '1';
                     label.style.transition = 'opacity 0.5s';
-
                     // Force reflow for transition restart if needed
                     void label.offsetWidth;
 
@@ -826,12 +869,9 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
 
 // Scroll-to-top arrow logic
 (function scrollArrow() {
-    // Only add once
     if (document.getElementById("scroll-to-top")) {
         return;
     }
-
-    // Up arrow
     const upBtn = document.createElement("button");
     upBtn.id = "scroll-to-top";
     upBtn.className = "scroll-arrow-btn";
@@ -842,11 +882,10 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
     upBtn.addEventListener("click", () => {
         window.scrollTo({ top: 0, behavior: "smooth" });
     });
-
     document.body.appendChild(upBtn);
 
     // Show/hide on scroll
-    window.addEventListener("scroll", function() {
+    window.addEventListener("scroll", function () {
         if (window.scrollY > 500) {
             upBtn.style.display = "block";
             upBtn.classList.add("show");
