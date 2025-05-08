@@ -1,5 +1,6 @@
 /**
- * script.js with Exif reader and PNGMetadata integration for PNG metadata extraction.
+ * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
+ * (c) otacoo / otakudude / doublerunes, GPLv3
  */
 
 const uploadArea = document.getElementById('upload-area');
