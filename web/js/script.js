@@ -20,41 +20,80 @@ function getExifData(file, callback) {
         let exifData = null;
         let found = false;
 
-        while (offset < view.byteLength) {
-            if (view.getUint8(offset) !== 0xFF) break;
-            const marker = view.getUint8(offset + 1);
-            const length = view.getUint16(offset + 2, false);
-            // APP1 marker (EXIF)
-            if (marker === 0xE1) {
-                // Check for "Exif" header
-                if (
-                    view.getUint8(offset + 4) === 0x45 && // 'E'
-                    view.getUint8(offset + 5) === 0x78 && // 'x'
-                    view.getUint8(offset + 6) === 0x69 && // 'i'
-                    view.getUint8(offset + 7) === 0x66 && // 'f'
-                    view.getUint8(offset + 8) === 0x00 &&
-                    view.getUint8(offset + 9) === 0x00
-                ) {
-                    // Try TIFF at offset 0 (standard), else scan for TIFF marker
-                    let exifStart = offset + 10;
-                    let exifLength = length - 8;
-                    let viewExif = new DataView(view.buffer, exifStart, exifLength);
-                    let tiffOffset = 0;
-                    let tiffMarker = viewExif.getUint16(0, false);
-                    if (tiffMarker !== 0x4949 && tiffMarker !== 0x4D4D) {
-                        // Scan for TIFF marker in EXIF segment
-                        tiffOffset = findTiffHeader(viewExif);
-                        if (tiffOffset === -1) {
+        try {
+            while (offset + 4 < view.byteLength) { // Ensure we can read marker + length
+                if (view.getUint8(offset) !== 0xFF) break;
+                const marker = view.getUint8(offset + 1);
+                
+                // Make sure we can read the length
+                if (offset + 4 > view.byteLength) break;
+                const length = view.getUint16(offset + 2, false);
+                
+                // Validate length to avoid invalid offsets
+                if (length < 2 || offset + 2 + length > view.byteLength) {
+                    offset += 2;
+                    continue;
+                }
+                
+                // APP1 marker (EXIF)
+                if (marker === 0xE1) {
+                    // Make sure we have enough bytes to check for "Exif" header
+                    if (offset + 10 > view.byteLength) break;
+                    
+                    // Check for "Exif" header
+                    if (
+                        view.getUint8(offset + 4) === 0x45 && // 'E'
+                        view.getUint8(offset + 5) === 0x78 && // 'x'
+                        view.getUint8(offset + 6) === 0x69 && // 'i'
+                        view.getUint8(offset + 7) === 0x66 && // 'f'
+                        view.getUint8(offset + 8) === 0x00 &&
+                        view.getUint8(offset + 9) === 0x00
+                    ) {
+                        // Try TIFF at offset 0 (standard), else scan for TIFF marker
+                        let exifStart = offset + 10;
+                        let exifLength = length - 8;
+                        
+                        // Validate exifLength to avoid creating an invalid DataView
+                        if (exifLength <= 0 || exifStart + exifLength > view.byteLength) {
+                            offset += 2 + length;
+                            continue;
+                        }
+                        
+                        let viewExif = new DataView(view.buffer, exifStart, exifLength);
+                        let tiffOffset = 0;
+                        
+                        // Make sure we can read the TIFF marker
+                        if (viewExif.byteLength < 2) {
+                            offset += 2 + length;
+                            continue;
+                        }
+                        
+                        let tiffMarker = viewExif.getUint16(0, false);
+                        if (tiffMarker !== 0x4949 && tiffMarker !== 0x4D4D) {
+                            // Scan for TIFF marker in EXIF segment
+                            tiffOffset = findTiffHeader(viewExif);
+                            if (tiffOffset === -1) {
+                                offset += 2 + length;
+                                continue;
+                            }
+                        }
+                        
+                        try {
+                            exifData = parseExif(viewExif, tiffOffset);
+                            found = true;
                             break;
+                        } catch (parseErr) {
+                            console.warn('Error parsing EXIF data:', parseErr);
+                            // Continue to next segment
                         }
                     }
-                    exifData = parseExif(viewExif, tiffOffset);
-                    found = true;
-                    break;
                 }
+                offset += 2 + length;
             }
-            offset += 2 + length;
+        } catch (err) {
+            console.error('Error reading EXIF data:', err);
         }
+        
         callback(exifData || {});
     };
     reader.readAsArrayBuffer(file);
@@ -475,6 +514,7 @@ function safeJsonParse(str) {
 }
 // Replace double-backslash n with real newline
 function unescapePromptString(str) {
+    if (typeof str !== 'string') return '';
     return str.replace(/\\\\n/g, "\n")
         .replace(/\\\\/g, "\\"); // Unescape any remaining double backslashes
 }
@@ -576,36 +616,46 @@ function extractUserCommentFromJPEG(file) {
 // --- Read WEBP metadata for UserComment with parsing and negative prompt detection ---
 function extractUserCommentFromWebp(file) {
     getWebpExifData(file, function (exifData) {
+        console.log('WEBP EXIF DATA:', exifData);
         // Only consider "Make" (EXIF tag 271) for JSON parsing, skip ImageDescription (EXIF tag 270)
         let candidate = null;
+        let sourceTag = null;
         if (exifData) {
             // Try string key first
             if (typeof exifData["Make"] === 'string' && exifData["Make"].trim()) {
                 candidate = exifData["Make"];
+                sourceTag = 'Make';
             }
             // Fallback: try numeric key 271
             else if (typeof exifData[271] === 'string' && exifData[271].trim()) {
                 candidate = exifData[271];
+                sourceTag = '271';
             }
         }
+        console.log('Selected WebP comment source:', sourceTag, 'Value:', candidate);
+        
         let found = false;
         if (candidate) {
             let jsonStr = candidate.trim();
             // If the string starts with "Prompt:" or "Workflow:", strip that prefix
             if (jsonStr.startsWith("Prompt:")) {
                 jsonStr = jsonStr.substring("Prompt:".length).trim();
+                console.log('Stripped "Prompt:" prefix:', jsonStr);
             } else if (jsonStr.startsWith("Workflow:")) {
                 jsonStr = jsonStr.substring("Workflow:".length).trim();
+                console.log('Stripped "Workflow:" prefix:', jsonStr);
             }
-            let parsed = null;
-            try {
-                parsed = JSON.parse(jsonStr);
-            } catch (err) { }
-            if (parsed && typeof parsed === 'object') {
+            
+            let parsed = safeJsonParse(jsonStr);
+            if (parsed) {
+                console.log('Successfully parsed WebP JSON:', parsed);
                 // 1. Collect all "text" values (recursively) for positive and negative prompts
                 const positiveTexts = [];
                 const negativeTexts = [];
                 collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
+                console.log('WebP Positive texts:', positiveTexts);
+                console.log('WebP Negative texts:', negativeTexts);
+                
                 if (positivePrompt) {
                     positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
                     autoResizeTextarea(positivePrompt);
@@ -619,6 +669,9 @@ function extractUserCommentFromWebp(file) {
                 collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
                 const extraMetadataPrompts = [];
                 collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+                console.log('WebP Wildcard texts:', wildcardTexts);
+                console.log('WebP extraMetadata prompts:', extraMetadataPrompts);
+                
                 const additionalPromptsTextarea = document.getElementById('additional-prompts');
                 if (additionalPromptsTextarea) {
                     let combined = [];
@@ -636,12 +689,15 @@ function extractUserCommentFromWebp(file) {
                 }
                 clearWarning();
                 found = true;
+            } else {
+                console.warn('Failed to parse WebP JSON:', jsonStr);
             }
         }
         if (!found) {
             // Fallback: treat UserComment as prompt string
             let comment = getWebpExifTag(exifData, "UserComment");
             if (comment && comment.trim()) {
+                console.log('Using WebP UserComment fallback:', comment);
                 clearWarning();
                 parseAndDisplayUserComment(comment);
             } else {
@@ -665,6 +721,7 @@ function extractPngMetadata(file) {
             const pngMeta = new PNGMetadata(binary, 'byte');
             const chunks = pngMeta.getChunks();
             let found = false;
+            
             // 1. Try tEXt, zTXt, iTXt chunks first
             ['tEXt', 'zTXt', 'iTXt'].forEach(chunkType => {
                 if (chunks[chunkType] && chunks[chunkType].data_raw.length > 0) {
@@ -674,18 +731,60 @@ function extractPngMetadata(file) {
                         if (sepIdx !== -1) {
                             const keyword = raw.substring(0, sepIdx);
                             const text = raw.substring(sepIdx + 1);
-                            if (
-                                ["prompt", "parameters", "usercomment"].includes(keyword.toLowerCase())
-                            ) {
+                            console.log('PNG chunk:', chunkType, 'keyword:', keyword);
+                            
+                            if (["prompt", "parameters", "usercomment"].includes(keyword.toLowerCase())) {
                                 let promptText = text;
-                                let parsed = null;
-                                try {
-                                    parsed = JSON.parse(promptText);
-                                } catch (err) { }
+                                console.log('Found PNG metadata with keyword:', keyword);
+                                
+                                let parsed = safeJsonParse(promptText);
                                 if (parsed && typeof parsed === 'object') {
-                                    // ... (your existing logic for positive/negative/additional/prompt-info-list)
+                                    console.log('Successfully parsed PNG JSON:', parsed);
+                                    
+                                    // 1. Collect all "text" values (recursively) for positive and negative prompts
+                                    const positiveTexts = [];
+                                    const negativeTexts = [];
+                                    collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
+                                    console.log('PNG Positive texts:', positiveTexts);
+                                    console.log('PNG Negative texts:', negativeTexts);
+                                    
+                                    if (positivePrompt) {
+                                        positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
+                                        autoResizeTextarea(positivePrompt);
+                                    }
+                                    if (negativePrompt) {
+                                        negativePrompt.value = negativeTexts.map(unescapePromptString).join('\n');
+                                        autoResizeTextarea(negativePrompt);
+                                    }
+                                    
+                                    // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
+                                    const wildcardTexts = [];
+                                    collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
+                                    const extraMetadataPrompts = [];
+                                    collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+                                    console.log('PNG Wildcard texts:', wildcardTexts);
+                                    console.log('PNG extraMetadata prompts:', extraMetadataPrompts);
+                                    
+                                    const additionalPromptsTextarea = document.getElementById('additional-prompts');
+                                    if (additionalPromptsTextarea) {
+                                        let combined = [];
+                                        if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
+                                        if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
+                                        additionalPromptsTextarea.value = combined.join('\n');
+                                        autoResizeTextarea(additionalPromptsTextarea);
+                                    }
+                                    
+                                    // 3. Collect allowed keys for prompt-info-list (robust: handle nested "inputs" and only primitives)
+                                    if (promptInfoList) {
+                                        promptInfoList.innerHTML = '';
+                                        collectPromptInfo(parsed, (key, value) => {
+                                            addMetadataItem(key, value, promptInfoList);
+                                        });
+                                    }
+                                    clearWarning();
                                     found = true;
                                 } else {
+                                    console.log('PNG text is not JSON, using as plain text');
                                     clearWarning();
                                     parseAndDisplayUserComment(promptText);
                                     found = true;
@@ -695,8 +794,10 @@ function extractPngMetadata(file) {
                     }
                 }
             });
+            
             // 2. If not found, try eXIf chunk
             if (!found && chunks['eXIf'] && chunks['eXIf'].data_raw.length > 0) {
+                console.log('PNG: No metadata in text chunks, trying eXIf chunk');
                 // eXIf chunk may be split, join all data_raw arrays
                 let exifBytes = [];
                 for (const part of chunks['eXIf'].data_raw) {
@@ -704,27 +805,34 @@ function extractPngMetadata(file) {
                 }
                 const exifArray = new Uint8Array(exifBytes);
                 const exifView = new DataView(exifArray.buffer);
-            
+                
                 // Find TIFF header
                 let tiffOffset = 0;
                 let tiffMarker = exifView.getUint16(0, false);
+                console.log('PNG eXIf: checking for TIFF marker, first bytes:', 
+                            exifArray[0].toString(16), exifArray[1].toString(16));
+                
                 if (tiffMarker !== 0x4949 && tiffMarker !== 0x4D4D) {
+                    console.log('PNG eXIf: TIFF marker not at offset 0, scanning...');
                     tiffOffset = findTiffHeader(exifView);
                     if (tiffOffset === -1) {
+                        console.warn('PNG eXIf: No TIFF header found');
                         showWarning('❌ No EXIF TIFF header found in PNG eXIf chunk');
                         return;
                     }
+                    console.log('PNG eXIf: TIFF header found at offset', tiffOffset);
                 }
+                
                 const exifData = parseExif(exifView, tiffOffset);
                 console.log('Parsed EXIF from PNG eXIf:', exifData);
-            
+                
                 // Try to extract UserComment or other prompt data from exifData
                 let userComment = exifData["UserComment"] || exifData[0x9286];
                 let makeComment = exifData["Make"];
                 let imageDescription = exifData["ImageDescription"] || exifData[0x010E] || exifData[270];
                 let comment = null;
                 let sourceTag = null;
-            
+                
                 // Try to decode UserComment if it's not a string (e.g., array of char codes)
                 if (userComment && typeof userComment !== 'string' && Array.isArray(userComment)) {
                     userComment = String.fromCharCode.apply(null, userComment);
@@ -739,22 +847,30 @@ function extractPngMetadata(file) {
                     comment = imageDescription;
                     sourceTag = 'ImageDescription';
                 }
-            
+                
                 console.log('Selected comment source from PNG EXIF:', sourceTag, 'Value:', comment);
-            
+                
                 if (comment) {
                     let jsonStr = comment.trim();
                     if (jsonStr.startsWith("Prompt:")) {
                         jsonStr = jsonStr.substring("Prompt:".length).trim();
+                        console.log('Stripped "Prompt:" prefix:', jsonStr);
                     } else if (jsonStr.startsWith("Workflow:")) {
                         jsonStr = jsonStr.substring("Workflow:".length).trim();
+                        console.log('Stripped "Workflow:" prefix:', jsonStr);
                     }
+                    
                     let parsed = safeJsonParse(jsonStr);
                     if (parsed && typeof parsed === 'object') {
+                        console.log('Successfully parsed PNG EXIF JSON:', parsed);
+                        
                         // 1. Collect all "text" values (recursively) for positive and negative prompts
                         const positiveTexts = [];
                         const negativeTexts = [];
                         collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
+                        console.log('PNG EXIF Positive texts:', positiveTexts);
+                        console.log('PNG EXIF Negative texts:', negativeTexts);
+                        
                         if (positivePrompt) {
                             positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
                             autoResizeTextarea(positivePrompt);
@@ -763,11 +879,15 @@ function extractPngMetadata(file) {
                             negativePrompt.value = negativeTexts.map(unescapePromptString).join('\n');
                             autoResizeTextarea(negativePrompt);
                         }
+                        
                         // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
                         const wildcardTexts = [];
                         collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
                         const extraMetadataPrompts = [];
                         collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+                        console.log('PNG EXIF Wildcard texts:', wildcardTexts);
+                        console.log('PNG EXIF extraMetadata prompts:', extraMetadataPrompts);
+                        
                         const additionalPromptsTextarea = document.getElementById('additional-prompts');
                         if (additionalPromptsTextarea) {
                             let combined = [];
@@ -776,6 +896,7 @@ function extractPngMetadata(file) {
                             additionalPromptsTextarea.value = combined.join('\n');
                             autoResizeTextarea(additionalPromptsTextarea);
                         }
+                        
                         // 3. Collect allowed keys for prompt-info-list (robust: handle nested "inputs" and only primitives)
                         if (promptInfoList) {
                             promptInfoList.innerHTML = '';
@@ -786,16 +907,20 @@ function extractPngMetadata(file) {
                         clearWarning();
                         found = true;
                     } else {
+                        console.log('PNG EXIF text is not JSON, using as plain text');
                         clearWarning();
                         parseAndDisplayUserComment(comment);
                         found = true;
                     }
                 }
             }
+            
             if (!found) {
+                console.warn('No prompt metadata found in PNG');
                 showWarning('❌ No prompt metadata found');
             }
         } catch (err) {
+            console.error('Failed to parse PNG metadata:', err);
             showWarning('❌ Failed to parse PNG metadata');
         }
     };
