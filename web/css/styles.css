@@ -1,0 +1,251 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 2em;
+    background: #222222;
+}
+
+.unselectable-label {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    color: #3672b6
+}
+
+#warning {
+    text-align: center;
+    color: #ffffff;
+}
+
+/* Copy buttons */
+.copy-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin-bottom: 0.25em;
+}
+
+.copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.1em 0.2em;
+    transition: background 0.2s;
+    border-radius: 4px;
+}
+
+.copy-btn:hover,
+.copy-btn:focus {
+    background: #444;
+}
+
+.copy-btn svg {
+    display: inline-block;
+}
+
+.btn-label {
+    margin-left: 0.5em;
+    color: #4caf50;
+    font-size: 0.95em;
+    opacity: 0;
+    transition: opacity 0.5s;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Flex layout for main content */
+.main-flex {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 2em;
+    max-width: 90vw;
+    margin: 0 auto;
+}
+
+/* Left container (Image Metadata Extractor) */
+.container {
+    max-width: 500px;
+    min-height: 500px;
+    width: 100%;
+    background: #353535;
+    padding: 2em;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+    text-align: center;
+    color: #ffffff;
+    margin-bottom: 15px;
+}
+
+h2 {
+    color: #ffffff;
+}
+
+/* Upload area */
+.upload-area {
+    border: 2px dashed #aaa;
+    border-radius: 8px;
+    padding: 2em;
+    text-align: center;
+    color: #4d4d4d;
+    background: #fafafa;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 1em;
+    position: relative;
+}
+
+.upload-area.dragover {
+    border-color: #007bff;
+    background: #e6f0ff;
+    color: #007bff;
+}
+
+.upload-area input[type="file"] {
+    display: none;
+}
+
+#image-preview {
+    display: block;
+    margin: 1em auto;
+    max-width: 100%;
+    max-height: 300px;
+}
+
+#metadata {
+    margin-top: 1.5em;
+}
+
+.metadata-list {
+    list-style: none;
+    padding: 0;
+    overflow-wrap: break-word;
+}
+
+.metadata-list li {
+    margin-bottom: 0.5em;
+    color: #e0e0e0;
+}
+
+/* Prompt container (right side) */
+.prompt-container,
+.additional-container {
+    max-width: 500px;
+    min-height: 500px;
+    width: 100%;
+    background: #353535;
+    padding: 2em;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 1.5em;
+}
+
+.prompt-container h1 {
+    margin-top: 0;
+    color: #ffffff;
+    text-align: center;
+}
+
+.prompt-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.prompt-group label {
+    color: #ffffff;
+    font-weight: bold;
+}
+
+.prompt-group textarea {
+    resize: none;
+    min-height: 80px;
+    padding: 0.75em;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: #232323;
+    color: #f0f0f0;
+    font-size: 1em;
+    transition: border-color 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.prompt-group textarea:focus {
+    border-color: #007bff;
+    outline: none;
+}
+
+.prompt-info-list {
+    list-style: none;
+    padding: 0;
+    overflow-wrap: break-word;
+}
+
+.prompt-info-list li {
+    margin-bottom: 0.5em;
+    color: #e0e0e0;
+}
+
+/* Additional container */
+
+/* Footer styles */
+.footer {
+    margin-top: 3em;
+    padding: 1em 0;
+    text-align: center;
+    color: #888;
+    font-size: 0.95em;
+}
+
+.footer a {
+    color: #007bff;
+    text-decoration: none;
+}
+
+.footer a:hover {
+    text-decoration: underline;
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+    .main-flex {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 2em;
+    }
+
+    .container,
+    .prompt-container {
+        max-width: 100%;
+    }
+}
+
+/* Go Up Arrow */
+.scroll-arrow-btn {
+    position: fixed;
+    bottom: 32px;
+    right: 32px;
+    z-index: 1000;
+    background: #222;
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    font-size: 2rem;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    opacity: 0;
+    transition: opacity 0.3s;
+    display: none;
+}
+.scroll-arrow-btn.show {
+    opacity: 1;
+}
