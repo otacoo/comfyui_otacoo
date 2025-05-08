@@ -455,21 +455,45 @@ function extractExifMetadata(file) {
     reader.readAsArrayBuffer(file);
 }
 
+// --- Helper: JSON-like string parser ---
+function safeJsonParse(str) {
+    // Unescape double-backslash newlines
+    let fixed = str.replace(/\\\\n/g, "\\n");
+    // Replace NaN with null (JSON does not support NaN)
+    fixed = fixed.replace(/\bNaN\b/g, 'null');
+    // Optionally, remove trailing commas before } or ]
+    fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+    try {
+        return JSON.parse(fixed);
+    } catch (err) {
+        console.warn('safeJsonParse failed:', err, fixed);
+        return null;
+    }
+}
+
 // --- Read JPEG and WEBP metadata for UserComment with parsing ---
 function extractUserCommentFromJPEG(file) {
     getExifData(file, function (exifData) {
+        console.log('EXIF DATA:', exifData);
+
         let userComment = getExifTag(exifData, "UserComment");
         let makeComment = getExifTag(exifData, "Make");
         let imageDescription = getExifTag(exifData, "ImageDescription") || exifData[0x010E] || exifData[270];
         let comment = null;
+        let sourceTag = null;
 
         if (userComment && typeof userComment === 'string' && userComment.trim() !== '') {
             comment = userComment;
+            sourceTag = 'UserComment';
         } else if (makeComment && typeof makeComment === 'string' && makeComment.trim() !== '') {
             comment = makeComment;
+            sourceTag = 'Make';
         } else if (imageDescription && typeof imageDescription === 'string' && imageDescription.trim() !== '') {
             comment = imageDescription;
+            sourceTag = 'ImageDescription';
         }
+
+        console.log('Selected comment source:', sourceTag, 'Value:', comment);
 
         let found = false;
         if (comment) {
@@ -477,18 +501,24 @@ function extractUserCommentFromJPEG(file) {
             // If the string starts with "Prompt:" or "Workflow:", strip that prefix
             if (jsonStr.startsWith("Prompt:")) {
                 jsonStr = jsonStr.substring("Prompt:".length).trim();
+                console.log('Stripped "Prompt:" prefix:', jsonStr);
             } else if (jsonStr.startsWith("Workflow:")) {
                 jsonStr = jsonStr.substring("Workflow:".length).trim();
+                console.log('Stripped "Workflow:" prefix:', jsonStr);
             }
-            let parsed = null;
-            try {
-                parsed = JSON.parse(jsonStr);
-            } catch (err) { }
+            let parsed = safeJsonParse(jsonStr);
+            if (parsed) {
+                console.log('Successfully parsed JSON from', sourceTag, parsed);
+            } else {
+                console.warn('Failed to parse JSON from', sourceTag, jsonStr);
+            }
             if (parsed && typeof parsed === 'object') {
                 // 1. Collect all "text" values (recursively) for positive and negative prompts
                 const positiveTexts = [];
                 const negativeTexts = [];
                 collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
+                console.log('Positive texts:', positiveTexts);
+                console.log('Negative texts:', negativeTexts);
                 if (positivePrompt) {
                     positivePrompt.value = positiveTexts.join('\n');
                     autoResizeTextarea(positivePrompt);
@@ -502,6 +532,8 @@ function extractUserCommentFromJPEG(file) {
                 collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
                 const extraMetadataPrompts = [];
                 collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+                console.log('Wildcard texts:', wildcardTexts);
+                console.log('extraMetadata prompts:', extraMetadataPrompts);
                 const additionalPromptsTextarea = document.getElementById('additional-prompts');
                 if (additionalPromptsTextarea) {
                     let combined = [];
@@ -523,6 +555,7 @@ function extractUserCommentFromJPEG(file) {
         }
         if (!found) {
             if (comment && comment.trim()) {
+                console.warn('No JSON parsed, falling back to parseAndDisplayUserComment for', sourceTag);
                 clearWarning();
                 parseAndDisplayUserComment(comment);
             } else {
