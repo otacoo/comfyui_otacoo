@@ -319,6 +319,7 @@ class PNGMetadata {
 }
 // --- End PNGMetadata class ---
 
+// Page shenanigans, copy events, clear textareas
 document.addEventListener('DOMContentLoaded', () => {
     clearPromptFields();
     clearWarning();
@@ -466,6 +467,7 @@ function formatBytes(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
+/////////////////////////////////////////////////////////////////////////////////
 
 // --- Minimal EXIF extraction for JPEG/WEBP (only a few fields, no library) ---
 function extractExifMetadata(file) {
@@ -500,17 +502,56 @@ function extractExifMetadata(file) {
 
 // --- Helper: JSON-like string parsers ---
 function safeJsonParse(str) {
+    if (!str || typeof str !== 'string') {
+        console.warn('safeJsonParse: Input is not a string', str);
+        return null;
+    }
+    // Trim the string
+    let fixed = str.trim();
+    // Check if it looks like JSON (starts with { or [)
+    if (!(fixed.startsWith('{') || fixed.startsWith('['))) {
+        console.warn('safeJsonParse: String does not appear to be JSON', fixed);
+        return null;
+    }
     // Unescape double-backslash newlines
-    let fixed = str.replace(/\\\\n/g, "\\n");
+    fixed = fixed.replace(/\\\\n/g, "\\n");
     // Replace NaN with null (JSON does not support NaN)
     fixed = fixed.replace(/\bNaN\b/g, 'null');
-    // Optionally, remove trailing commas before } or ]
+    // Remove trailing commas before } or ]
     fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+    // Fix unquoted property names (common in some metadata)
+    fixed = fixed.replace(/([{,]\s*)([a-zA-Z0-9_$]+)(\s*:)/g, '$1"$2"$3');
+    // Fix single quotes used instead of double quotes
+    // This is more complex and might cause issues with strings containing quotes
+    // Only attempt if the initial parse fails
     try {
         return JSON.parse(fixed);
     } catch (err) {
-        console.warn('safeJsonParse failed:', err, fixed);
-        return null;
+        console.warn('First JSON parse attempt failed:', err);
+        
+        try {
+            // Try replacing single quotes with double quotes (simple approach)
+            const singleQuotesFixed = fixed.replace(/'/g, '"');
+            return JSON.parse(singleQuotesFixed);
+        } catch (err2) {
+            console.warn('Second JSON parse attempt failed:', err2);
+            
+            try {
+                // Last resort: try eval (with safety precautions)
+                // This is risky but might work for some non-standard JSON
+                if (fixed.match(/^[\s\n]*[\[\{].*[\}\]][\s\n]*$/)) {
+                    const result = (new Function('return ' + fixed))();
+                    if (typeof result === 'object' && result !== null) {
+                        console.warn('Used Function constructor as fallback for JSON parsing');
+                        return result;
+                    }
+                }
+            } catch (err3) {
+                console.warn('All JSON parse attempts failed:', err3, fixed);
+            }
+            
+            return null;
+        }
     }
 }
 // Replace double-backslash n with real newline
@@ -550,10 +591,8 @@ function extractUserCommentFromJPEG(file) {
             // If the string starts with "Prompt:" or "Workflow:", strip that prefix
             if (jsonStr.startsWith("Prompt:")) {
                 jsonStr = jsonStr.substring("Prompt:".length).trim();
-                console.log('Stripped "Prompt:" prefix:', jsonStr);
             } else if (jsonStr.startsWith("Workflow:")) {
                 jsonStr = jsonStr.substring("Workflow:".length).trim();
-                console.log('Stripped "Workflow:" prefix:', jsonStr);
             }
             let parsed = safeJsonParse(jsonStr);
             if (parsed) {
@@ -898,7 +937,7 @@ function extractPngMetadata(file) {
                             autoResizeTextarea(additionalPromptsTextarea);
                         }
                         
-                        // 3. Collect allowed keys for prompt-info-list (robust: handle nested "inputs" and only primitives)
+                        // 3. Collect allowed keys for prompt-info-list (handle nested "inputs" and only primitives)
                         if (promptInfoList) {
                             promptInfoList.innerHTML = '';
                             collectPromptInfo(parsed, (key, value) => {
@@ -1030,6 +1069,8 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     }
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
+        
+        // Handle text key with negative detection
         if (key === 'text' && typeof obj[key] === 'string') {
             const val = obj[key];
             if (/low quality|lowres|watermark|jpeg artifacts|worst quality/i.test(val)) {
@@ -1037,7 +1078,21 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
             } else {
                 positiveArr.push(val);
             }
-        } else if (typeof obj[key] === 'object') {
+        } 
+        // Handle tags key (always positive)
+        else if (key === 'tags' && typeof obj[key] === 'string') {
+            positiveArr.push(obj[key]);
+        }
+        // Handle explicit positive key
+        else if ((key === 'positive' || key === 'positive_prompt') && typeof obj[key] === 'string') {
+            positiveArr.push(obj[key]);
+        }
+        // Handle explicit negative key
+        else if ((key === 'negative' || key === 'negative_prompt') && typeof obj[key] === 'string') {
+            negativeArr.push(obj[key]);
+        }
+        // Recursively process nested objects
+        else if (typeof obj[key] === 'object') {
             collectTextValuesWithNegatives(obj[key], positiveArr, negativeArr);
         }
     }
