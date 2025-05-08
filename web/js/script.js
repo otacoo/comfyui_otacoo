@@ -508,33 +508,23 @@ function safeJsonParse(str) {
     }
     // Trim the string
     let fixed = str.trim();
-    // Check if it looks like JSON (starts with { or [)
-    if (!(fixed.startsWith('{') || fixed.startsWith('['))) {
-        console.warn('safeJsonParse: String does not appear to be JSON', fixed);
-        return null;
-    }
     // Unescape double-backslash newlines
     fixed = fixed.replace(/\\\\n/g, "\\n");
     // Replace NaN with null (JSON does not support NaN)
     fixed = fixed.replace(/\bNaN\b/g, 'null');
     // Remove trailing commas before } or ]
     fixed = fixed.replace(/,\s*([}\]])/g, '$1');
-    // Fix unquoted property names (common in some metadata)
-    fixed = fixed.replace(/([{,]\s*)([a-zA-Z0-9_$]+)(\s*:)/g, '$1"$2"$3');
-    // Fix single quotes used instead of double quotes
-    // This is more complex and might cause issues with strings containing quotes
-    // Only attempt if the initial parse fails
+
     try {
         return JSON.parse(fixed);
     } catch (err) {
-        console.warn('First JSON parse attempt failed:', err);
-        
+        // Try one more approach - replace single quotes with double quotes
         try {
-            // Try replacing single quotes with double quotes (simple approach)
             const singleQuotesFixed = fixed.replace(/'/g, '"');
             return JSON.parse(singleQuotesFixed);
         } catch (err2) {
-            console.warn('Second JSON parse attempt failed:', err2);
+            // Only log if both attempts failed
+            console.warn('safeJsonParse failed:', err2, fixed);
             
             try {
                 // Last resort: try eval (with safety precautions)
@@ -547,6 +537,7 @@ function safeJsonParse(str) {
                     }
                 }
             } catch (err3) {
+                // Cut my life into pieces, this is my last resort
                 console.warn('All JSON parse attempts failed:', err3, fixed);
             }
             
@@ -1090,6 +1081,15 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         // Handle explicit negative key
         else if ((key === 'negative' || key === 'negative_prompt') && typeof obj[key] === 'string') {
             negativeArr.push(obj[key]);
+        }
+        // Handle generic prompt key (always positive unless contains negative keywords)
+        else if (key === 'prompt' && typeof obj[key] === 'string') {
+            const val = obj[key];
+            if (/low quality|lowres|watermark|jpeg artifacts|worst quality/i.test(val)) {
+                negativeArr.push(val);
+            } else {
+                positiveArr.push(val);
+            }
         }
         // Recursively process nested objects
         else if (typeof obj[key] === 'object') {
