@@ -13,4 +13,5 @@ For now, you can just browse to the web folder and open imginfo.html normally.
 ![Screenshot-SD-Metadata-Extractor](https://github.com/user-attachments/assets/d38f19d4-ce05-446c-95f4-f1dbfd448173)
 
 ### TODO:
-- ComfyUI integration
+- Better ComfyUI integration
+- Better parsing of ComfyUI info
