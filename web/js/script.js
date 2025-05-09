@@ -372,6 +372,42 @@ class PNGMetadata {
 document.addEventListener('DOMContentLoaded', () => {
     clearPromptFields();
     clearWarning();
+
+    const btn = document.getElementById('strip-metadata-btn');
+    if (btn) {
+        btn.addEventListener('click', async function () {
+            clearWarning();
+            if (!fileInput.files || !fileInput.files[0]) {
+                showWarning('No image loaded.');
+                return;
+            }
+            const file = fileInput.files[0];
+            const confirmed = window.confirm('Are you sure you want to strip all metadata from this image? This will create a new copy without metadata.');
+            if (!confirmed) return;
+
+            try {
+                const cleanBlob = await stripImageMetadata(file);
+                if (!cleanBlob) {
+                    showWarning('Failed to strip metadata.');
+                    return;
+                }
+                // Offer download of the clean image
+                const url = URL.createObjectURL(cleanBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = getStrippedFilename(file.name);
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    URL.revokeObjectURL(url);
+                    a.remove();
+                }, 1000);
+            } catch (err) {
+                showWarning('Error stripping metadata: ' + err.message);
+            }
+        });
+    }
 });
 
 uploadArea.addEventListener('click', () => fileInput.click());
@@ -505,6 +541,53 @@ function formatBytes(bytes) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// --- "Strip Metadata" Functionality ---
+function getStrippedFilename(originalName) {
+    const dotIdx = originalName.lastIndexOf('.');
+    if (dotIdx === -1) return originalName + '_stripped';
+    return originalName.slice(0, dotIdx) + '_stripped' + originalName.slice(dotIdx);
+}
+
+async function stripImageMetadata(file) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = function () {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+
+                let mimeType = file.type;
+                let quality = 0.92;
+                if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+                    canvas.toBlob(resolve, 'image/jpeg', quality);
+                } else if (mimeType === 'image/png') {
+                    canvas.toBlob(resolve, 'image/png');
+                } else if (mimeType === 'image/webp' && canvas.toBlob) {
+                    canvas.toBlob(resolve, 'image/webp', quality);
+                } else {
+                    canvas.toBlob(resolve, 'image/png');
+                }
+            } catch (err) {
+                reject(err);
+            }
+        };
+        img.onerror = function () {
+            reject(new Error('Failed to load image for metadata stripping.'));
+        };
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            img.src = e.target.result;
+        };
+        reader.onerror = function () {
+            reject(new Error('Failed to read image file.'));
+        };
+        reader.readAsDataURL(file);
+    });
 }
 /////////////////////////////////////////////////////////////////////////////////
 
