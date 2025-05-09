@@ -12,6 +12,66 @@ const negativePrompt = document.getElementById('negative-prompt');
 const promptInfoList = document.getElementById('prompt-info-list');
 const warningSpan = document.getElementById('warning');
 
+// --- Helper: Set textarea value and auto-resize ---
+function setAndResize(textarea, value) {
+    if (textarea) {
+        textarea.value = value;
+        autoResizeTextarea(textarea);
+    }
+}
+
+// --- Helper: Strip "Prompt:" or "Workflow:" prefix ---
+function stripPromptPrefix(str) {
+    if (typeof str !== 'string') return str;
+    if (str.startsWith("Prompt:")) return str.substring("Prompt:".length).trim();
+    if (str.startsWith("Workflow:")) return str.substring("Workflow:".length).trim();
+    return str;
+}
+
+// --- Centralized prompt data distribution ---
+function distributePromptData(parsed, comment, sourceTag) {
+    let found = false;
+    if (parsed && typeof parsed === 'object') {
+        // 1. Collect all "text" values (recursively) for positive and negative prompts
+        const positiveTexts = [];
+        const negativeTexts = [];
+        collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
+
+        setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n'));
+        setAndResize(negativePrompt, negativeTexts.map(unescapePromptString).join('\n'));
+
+        // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
+        const wildcardTexts = [];
+        collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
+        const extraMetadataPrompts = [];
+        collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+
+        const additionalPromptsTextarea = document.getElementById('additional-prompts');
+        if (additionalPromptsTextarea) {
+            let combined = [];
+            if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
+            if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
+            setAndResize(additionalPromptsTextarea, combined.join('\n'));
+        }
+
+        // 3. Collect allowed keys for prompt-info-list (also handle nested "inputs" and primitives)
+        if (promptInfoList) {
+            promptInfoList.innerHTML = '';
+            collectPromptInfo(parsed, (key, value) => {
+                addMetadataItem(key, value, promptInfoList);
+            });
+        }
+        clearWarning();
+        found = true;
+    }
+    if (!found && comment && comment.trim()) {
+        clearWarning();
+        parseAndDisplayUserComment(comment);
+    } else if (!found) {
+        showWarning('❌ No metadata found');
+    }
+}
+
 // --- EXIF parser ---
 function getExifData(file, callback) {
     const reader = new FileReader();
@@ -25,22 +85,20 @@ function getExifData(file, callback) {
             while (offset + 4 < view.byteLength) { // Ensure we can read marker + length
                 if (view.getUint8(offset) !== 0xFF) break;
                 const marker = view.getUint8(offset + 1);
-                
+
                 // Make sure we can read the length
                 if (offset + 4 > view.byteLength) break;
                 const length = view.getUint16(offset + 2, false);
-                
+
                 // Validate length to avoid invalid offsets
                 if (length < 2 || offset + 2 + length > view.byteLength) {
                     offset += 2;
                     continue;
                 }
-                
-                // APP1 marker (EXIF)
+
                 if (marker === 0xE1) {
                     // Make sure we have enough bytes to check for "Exif" header
                     if (offset + 10 > view.byteLength) break;
-                    
                     // Check for "Exif" header
                     if (
                         view.getUint8(offset + 4) === 0x45 && // 'E'
@@ -53,22 +111,18 @@ function getExifData(file, callback) {
                         // Try TIFF at offset 0 (standard), else scan for TIFF marker
                         let exifStart = offset + 10;
                         let exifLength = length - 8;
-                        
                         // Validate exifLength to avoid creating an invalid DataView
                         if (exifLength <= 0 || exifStart + exifLength > view.byteLength) {
                             offset += 2 + length;
                             continue;
                         }
-                        
                         let viewExif = new DataView(view.buffer, exifStart, exifLength);
                         let tiffOffset = 0;
-                        
                         // Make sure we can read the TIFF marker
                         if (viewExif.byteLength < 2) {
                             offset += 2 + length;
                             continue;
                         }
-                        
                         let tiffMarker = viewExif.getUint16(0, false);
                         if (tiffMarker !== 0x4949 && tiffMarker !== 0x4D4D) {
                             // Scan for TIFF marker in EXIF segment
@@ -78,14 +132,12 @@ function getExifData(file, callback) {
                                 continue;
                             }
                         }
-                        
                         try {
                             exifData = parseExif(viewExif, tiffOffset);
                             found = true;
                             break;
                         } catch (parseErr) {
                             console.warn('Error parsing EXIF data:', parseErr);
-                            // Continue to next segment
                         }
                     }
                 }
@@ -94,7 +146,6 @@ function getExifData(file, callback) {
         } catch (err) {
             console.error('Error reading EXIF data:', err);
         }
-        
         callback(exifData || {});
     };
     reader.readAsArrayBuffer(file);
@@ -215,7 +266,6 @@ function getWebpExifData(file, callback) {
             );
             const chunkSize = bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24);
             console.log('Found chunk:', chunkType, 'at offset', offset, 'size', chunkSize);
-            console.log('Checking chunk:', chunkType, 'at offset', offset);
             if (chunkType === "EXIF") {
                 const exifStart = offset + 8;
                 // Always create a DataView for the EXIF chunk (do NOT require "Exif\0\0")
@@ -249,7 +299,7 @@ function getWebpExifTag(exifData, tagName) {
 // --- PNGMetadata class for extracting tEXt/iTXt/zTXt chunks from PNGs ---
 class PNGMetadata {
     constructor(data, mode = 'byte') {
-        // data: binary string or Uint8Array
+        // Accepts either a binary string or Uint8Array
         if (mode === 'byte' && typeof data === 'string') {
             this.bytes = new Uint8Array(data.length);
             for (let i = 0; i < data.length; i++) {
@@ -265,7 +315,7 @@ class PNGMetadata {
 
     _parseChunks() {
         const bytes = this.bytes;
-        let offset = 8; // skip PNG signature
+        let offset = 8;
         const chunks = {};
         while (offset < bytes.length) {
             if (offset + 8 > bytes.length) break;
@@ -317,9 +367,8 @@ class PNGMetadata {
         return this.chunks;
     }
 }
-// --- End PNGMetadata class ---
 
-// Page shenanigans, copy events, clear textareas
+// --- Page events and UI logic ---
 document.addEventListener('DOMContentLoaded', () => {
     clearPromptFields();
     clearWarning();
@@ -333,6 +382,7 @@ uploadArea.addEventListener('keydown', (e) => {
     }
 });
 
+// Drag and drop events
 ['dragenter', 'dragover'].forEach(event => {
     uploadArea.addEventListener(event, (e) => {
         e.preventDefault();
@@ -380,21 +430,12 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function clearPromptFields() {
-    if (positivePrompt) {
-        positivePrompt.value = '';
-        autoResizeTextarea(positivePrompt);
-    }
-    if (negativePrompt) {
-        negativePrompt.value = '';
-        autoResizeTextarea(negativePrompt);
-    }
+    setAndResize(positivePrompt, '');
+    setAndResize(negativePrompt, '');
     if (promptInfoList) promptInfoList.innerHTML = '';
     // Clear the additional-prompts textarea as well
     const additionalPromptsTextarea = document.getElementById('additional-prompts');
-    if (additionalPromptsTextarea) {
-        additionalPromptsTextarea.value = '';
-        autoResizeTextarea(additionalPromptsTextarea);
-    }
+    setAndResize(additionalPromptsTextarea, '');
 }
 
 function isSupportedImage(file) {
@@ -424,14 +465,12 @@ function clearPreviewAndMetadata() {
 function extractAndDisplayMetadata(file) {
     // Clear previous metadata
     metadataList.innerHTML = '';
-
     // Basic metadata
     const basicMetadata = [
         { label: 'File Name', value: file.name },
         { label: 'File Type', value: file.type },
         { label: 'File Size', value: formatBytes(file.size) }
     ];
-
     // Get image dimensions
     const reader = new FileReader();
     reader.onload = function (e) {
@@ -439,12 +478,10 @@ function extractAndDisplayMetadata(file) {
         img.onload = function () {
             basicMetadata.push({ label: 'Width', value: img.width + ' px' });
             basicMetadata.push({ label: 'Height', value: img.height + ' px' });
-
             // Display basic metadata
             for (const item of basicMetadata) {
                 addMetadataItem(item.label, item.value);
             }
-
             // Try to extract EXIF for JPEG/WEBP
             if (file.type === 'image/jpeg' || file.type === 'image/webp') {
                 extractExifMetadata(file);
@@ -453,11 +490,6 @@ function extractAndDisplayMetadata(file) {
         img.src = e.target.result;
     };
     reader.readAsDataURL(file);
-
-    // For PNG, no EXIF, so just display basic metadata
-    if (file.type === 'image/png') {
-        // No additional metadata for PNG here
-    }
 }
 
 function formatBytes(bytes) {
@@ -474,14 +506,12 @@ function extractExifMetadata(file) {
     const reader = new FileReader();
     reader.onload = function (e) {
         const view = new DataView(e.target.result);
-
         // Check for JPEG EXIF header (0xFFD8)
         if (view.getUint16(0, false) === 0xFFD8) {
             let offset = 2;
             const length = view.byteLength;
             while (offset < length) {
-                if (view.getUint16(offset + 2, false) === 0x4578) { // 'Ex'
-                    // Found EXIF
+                if (view.getUint16(offset + 2, false) === 0x4578) {
                     addMetadataItem('EXIF', 'EXIF data present');
                     return;
                 }
@@ -514,7 +544,6 @@ function safeJsonParse(str) {
     fixed = fixed.replace(/\bNaN\b/g, 'null');
     // Remove trailing commas before } or ]
     fixed = fixed.replace(/,\s*([}\]])/g, '$1');
-
     try {
         return JSON.parse(fixed);
     } catch (err) {
@@ -525,7 +554,6 @@ function safeJsonParse(str) {
         } catch (err2) {
             // Only log if both attempts failed
             console.warn('safeJsonParse failed:', err2, fixed);
-            
             try {
                 // Last resort: try eval (with safety precautions)
                 // This is risky but might work for some non-standard JSON
@@ -540,11 +568,11 @@ function safeJsonParse(str) {
                 // Cut my life into pieces, this is my last resort
                 console.warn('All JSON parse attempts failed:', err3, fixed);
             }
-            
             return null;
         }
     }
 }
+
 // Replace double-backslash n with real newline
 function unescapePromptString(str) {
     if (typeof str !== 'string') return '';
@@ -552,17 +580,15 @@ function unescapePromptString(str) {
         .replace(/\\\\/g, "\\"); // Unescape any remaining double backslashes
 }
 
-// --- Read JPEG and WEBP metadata for UserComment with parsing ---
+// --- JPEG and WEBP metadata extraction with prompt distribution ---
 function extractUserCommentFromJPEG(file) {
     getExifData(file, function (exifData) {
         console.log('EXIF DATA:', exifData);
-
         let userComment = getExifTag(exifData, "UserComment");
         let makeComment = getExifTag(exifData, "Make");
         let imageDescription = getExifTag(exifData, "ImageDescription") || exifData[0x010E] || exifData[270];
         let comment = null;
         let sourceTag = null;
-
         if (userComment && typeof userComment === 'string' && userComment.trim() !== '') {
             comment = userComment;
             sourceTag = 'UserComment';
@@ -573,73 +599,13 @@ function extractUserCommentFromJPEG(file) {
             comment = imageDescription;
             sourceTag = 'ImageDescription';
         }
-
         console.log('Selected comment source:', sourceTag, 'Value:', comment);
-
-        let found = false;
         if (comment) {
-            let jsonStr = comment.trim();
-            // If the string starts with "Prompt:" or "Workflow:", strip that prefix
-            if (jsonStr.startsWith("Prompt:")) {
-                jsonStr = jsonStr.substring("Prompt:".length).trim();
-            } else if (jsonStr.startsWith("Workflow:")) {
-                jsonStr = jsonStr.substring("Workflow:".length).trim();
-            }
+            let jsonStr = stripPromptPrefix(comment.trim());
             let parsed = safeJsonParse(jsonStr);
-            if (parsed) {
-                console.log('Successfully parsed JSON from', sourceTag, parsed);
-            } else {
-                console.warn('Failed to parse JSON from', sourceTag, jsonStr);
-            }
-            if (parsed && typeof parsed === 'object') {
-                // 1. Collect all "text" values (recursively) for positive and negative prompts
-                const positiveTexts = [];
-                const negativeTexts = [];
-                collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
-                console.log('Positive texts:', positiveTexts);
-                console.log('Negative texts:', negativeTexts);
-                if (positivePrompt) {
-                    positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
-                    autoResizeTextarea(positivePrompt);
-                }
-                if (negativePrompt) {
-                    negativePrompt.value = negativeTexts.map(unescapePromptString).join('\n');
-                    autoResizeTextarea(negativePrompt);
-                }
-                // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
-                const wildcardTexts = [];
-                collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
-                const extraMetadataPrompts = [];
-                collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
-                console.log('Wildcard texts:', wildcardTexts);
-                console.log('extraMetadata prompts:', extraMetadataPrompts);
-                const additionalPromptsTextarea = document.getElementById('additional-prompts');
-                if (additionalPromptsTextarea) {
-                    let combined = [];
-                    if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
-                    if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
-                    additionalPromptsTextarea.value = combined.join('\n');
-                    autoResizeTextarea(additionalPromptsTextarea);
-                }
-                // 3. Collect allowed keys for prompt-info-list (also handle nested "inputs" and primitives)
-                if (promptInfoList) {
-                    promptInfoList.innerHTML = '';
-                    collectPromptInfo(parsed, (key, value) => {
-                        addMetadataItem(key, value, promptInfoList);
-                    });
-                }
-                clearWarning();
-                found = true;
-            }
-        }
-        if (!found) {
-            if (comment && comment.trim()) {
-                console.warn('No JSON parsed, falling back to parseAndDisplayUserComment for', sourceTag);
-                clearWarning();
-                parseAndDisplayUserComment(comment);
-            } else {
-                showWarning('❌ No metadata found');
-            }
+            distributePromptData(parsed, comment, sourceTag);
+        } else {
+            showWarning('❌ No metadata found');
         }
     });
 }
@@ -656,76 +622,18 @@ function extractUserCommentFromWebp(file) {
             if (typeof exifData["Make"] === 'string' && exifData["Make"].trim()) {
                 candidate = exifData["Make"];
                 sourceTag = 'Make';
-            }
             // Fallback: try numeric key 271
-            else if (typeof exifData[271] === 'string' && exifData[271].trim()) {
+            } else if (typeof exifData[271] === 'string' && exifData[271].trim()) {
                 candidate = exifData[271];
                 sourceTag = '271';
             }
         }
         console.log('Selected WebP comment source:', sourceTag, 'Value:', candidate);
-        
-        let found = false;
         if (candidate) {
-            let jsonStr = candidate.trim();
-            // If the string starts with "Prompt:" or "Workflow:", strip that prefix
-            if (jsonStr.startsWith("Prompt:")) {
-                jsonStr = jsonStr.substring("Prompt:".length).trim();
-                console.log('Stripped "Prompt:" prefix:', jsonStr);
-            } else if (jsonStr.startsWith("Workflow:")) {
-                jsonStr = jsonStr.substring("Workflow:".length).trim();
-                console.log('Stripped "Workflow:" prefix:', jsonStr);
-            }
-            
+            let jsonStr = stripPromptPrefix(candidate.trim());
             let parsed = safeJsonParse(jsonStr);
-            if (parsed) {
-                console.log('Successfully parsed WebP JSON:', parsed);
-                // 1. Collect all "text" values (recursively) for positive and negative prompts
-                const positiveTexts = [];
-                const negativeTexts = [];
-                collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
-                console.log('WebP Positive texts:', positiveTexts);
-                console.log('WebP Negative texts:', negativeTexts);
-                
-                if (positivePrompt) {
-                    positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
-                    autoResizeTextarea(positivePrompt);
-                }
-                if (negativePrompt) {
-                    negativePrompt.value = negativeTexts.map(unescapePromptString).join('\n');
-                    autoResizeTextarea(negativePrompt);
-                }
-                // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
-                const wildcardTexts = [];
-                collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
-                const extraMetadataPrompts = [];
-                collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
-                console.log('WebP Wildcard texts:', wildcardTexts);
-                console.log('WebP extraMetadata prompts:', extraMetadataPrompts);
-                
-                const additionalPromptsTextarea = document.getElementById('additional-prompts');
-                if (additionalPromptsTextarea) {
-                    let combined = [];
-                    if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
-                    if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
-                    additionalPromptsTextarea.value = combined.join('\n');
-                    autoResizeTextarea(additionalPromptsTextarea);
-                }
-                // 3. Collect allowed keys for prompt-info-list (also handle nested "inputs" and primitives)
-                if (promptInfoList) {
-                    promptInfoList.innerHTML = '';
-                    collectPromptInfo(parsed, (key, value) => {
-                        addMetadataItem(key, value, promptInfoList);
-                    });
-                }
-                clearWarning();
-                found = true;
-            } else {
-                console.warn('Failed to parse WebP JSON:', jsonStr);
-            }
-        }
-        if (!found) {
-            // Fallback: treat UserComment as prompt string
+            distributePromptData(parsed, candidate, sourceTag);
+        } else {
             let comment = getWebpExifTag(exifData, "UserComment");
             if (comment && comment.trim()) {
                 console.log('Using WebP UserComment fallback:', comment);
@@ -738,21 +646,16 @@ function extractUserCommentFromWebp(file) {
     });
 }
 
-// --- PNG metadata extraction with negative prompt detection ---
+// --- PNG metadata extraction with prompt distribution ---
 function extractPngMetadata(file) {
     const reader = new FileReader();
     reader.onload = function (e) {
         const arrayBuffer = e.target.result;
-        let binary = '';
         const bytes = new Uint8Array(arrayBuffer);
-        for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
         try {
-            const pngMeta = new PNGMetadata(binary, 'byte');
+            const pngMeta = new PNGMetadata(bytes, 'byte');
             const chunks = pngMeta.getChunks();
             let found = false;
-            
             // 1. Try tEXt, zTXt, iTXt chunks first
             ['tEXt', 'zTXt', 'iTXt'].forEach(chunkType => {
                 if (chunks[chunkType] && chunks[chunkType].data_raw.length > 0) {
@@ -763,86 +666,30 @@ function extractPngMetadata(file) {
                             const keyword = raw.substring(0, sepIdx);
                             const text = raw.substring(sepIdx + 1);
                             console.log('PNG chunk:', chunkType, 'keyword:', keyword);
-                            
                             if (["prompt", "parameters", "usercomment"].includes(keyword.toLowerCase())) {
                                 let promptText = text;
                                 console.log('Found PNG metadata with keyword:', keyword);
-                                
                                 let parsed = safeJsonParse(promptText);
-                                if (parsed && typeof parsed === 'object') {
-                                    console.log('Successfully parsed PNG JSON:', parsed);
-                                    
-                                    // 1. Collect all "text" values (recursively) for positive and negative prompts
-                                    const positiveTexts = [];
-                                    const negativeTexts = [];
-                                    collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
-                                    console.log('PNG Positive texts:', positiveTexts);
-                                    console.log('PNG Negative texts:', negativeTexts);
-                                    
-                                    if (positivePrompt) {
-                                        positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
-                                        autoResizeTextarea(positivePrompt);
-                                    }
-                                    if (negativePrompt) {
-                                        negativePrompt.value = negativeTexts.map(unescapePromptString).join('\n');
-                                        autoResizeTextarea(negativePrompt);
-                                    }
-                                    
-                                    // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
-                                    const wildcardTexts = [];
-                                    collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
-                                    const extraMetadataPrompts = [];
-                                    collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
-                                    console.log('PNG Wildcard texts:', wildcardTexts);
-                                    console.log('PNG extraMetadata prompts:', extraMetadataPrompts);
-                                    
-                                    const additionalPromptsTextarea = document.getElementById('additional-prompts');
-                                    if (additionalPromptsTextarea) {
-                                        let combined = [];
-                                        if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
-                                        if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
-                                        additionalPromptsTextarea.value = combined.join('\n');
-                                        autoResizeTextarea(additionalPromptsTextarea);
-                                    }
-                                    
-                                    // 3. Collect allowed keys for prompt-info-list (robust: handle nested "inputs" and only primitives)
-                                    if (promptInfoList) {
-                                        promptInfoList.innerHTML = '';
-                                        collectPromptInfo(parsed, (key, value) => {
-                                            addMetadataItem(key, value, promptInfoList);
-                                        });
-                                    }
-                                    clearWarning();
-                                    found = true;
-                                } else {
-                                    console.log('PNG text is not JSON, using as plain text');
-                                    clearWarning();
-                                    parseAndDisplayUserComment(promptText);
-                                    found = true;
-                                }
+                                distributePromptData(parsed, promptText, keyword);
+                                found = true;
                             }
                         }
                     }
                 }
             });
-            
             // 2. If not found, try eXIf chunk
             if (!found && chunks['eXIf'] && chunks['eXIf'].data_raw.length > 0) {
                 console.log('PNG: No metadata in text chunks, trying eXIf chunk');
-                // eXIf chunk may be split, join all data_raw arrays
                 let exifBytes = [];
                 for (const part of chunks['eXIf'].data_raw) {
                     exifBytes = exifBytes.concat(Array.from(part));
                 }
                 const exifArray = new Uint8Array(exifBytes);
                 const exifView = new DataView(exifArray.buffer);
-                
+
                 // Find TIFF header
                 let tiffOffset = 0;
                 let tiffMarker = exifView.getUint16(0, false);
-                console.log('PNG eXIf: checking for TIFF marker, first bytes:', 
-                            exifArray[0].toString(16), exifArray[1].toString(16));
-                
                 if (tiffMarker !== 0x4949 && tiffMarker !== 0x4D4D) {
                     console.log('PNG eXIf: TIFF marker not at offset 0, scanning...');
                     tiffOffset = findTiffHeader(exifView);
@@ -853,17 +700,15 @@ function extractPngMetadata(file) {
                     }
                     console.log('PNG eXIf: TIFF header found at offset', tiffOffset);
                 }
-                
                 const exifData = parseExif(exifView, tiffOffset);
                 console.log('Parsed EXIF from PNG eXIf:', exifData);
-                
+
                 // Try to extract UserComment or other prompt data from exifData
                 let userComment = exifData["UserComment"] || exifData[0x9286];
                 let makeComment = exifData["Make"];
                 let imageDescription = exifData["ImageDescription"] || exifData[0x010E] || exifData[270];
                 let comment = null;
                 let sourceTag = null;
-                
                 // Try to decode UserComment if it's not a string (e.g., array of char codes)
                 if (userComment && typeof userComment !== 'string' && Array.isArray(userComment)) {
                     userComment = String.fromCharCode.apply(null, userComment);
@@ -878,74 +723,14 @@ function extractPngMetadata(file) {
                     comment = imageDescription;
                     sourceTag = 'ImageDescription';
                 }
-                
                 console.log('Selected comment source from PNG EXIF:', sourceTag, 'Value:', comment);
-                
                 if (comment) {
-                    let jsonStr = comment.trim();
-                    if (jsonStr.startsWith("Prompt:")) {
-                        jsonStr = jsonStr.substring("Prompt:".length).trim();
-                        console.log('Stripped "Prompt:" prefix:', jsonStr);
-                    } else if (jsonStr.startsWith("Workflow:")) {
-                        jsonStr = jsonStr.substring("Workflow:".length).trim();
-                        console.log('Stripped "Workflow:" prefix:', jsonStr);
-                    }
-                    
+                    let jsonStr = stripPromptPrefix(comment.trim());
                     let parsed = safeJsonParse(jsonStr);
-                    if (parsed && typeof parsed === 'object') {
-                        console.log('Successfully parsed PNG EXIF JSON:', parsed);
-                        
-                        // 1. Collect all "text" values (recursively) for positive and negative prompts
-                        const positiveTexts = [];
-                        const negativeTexts = [];
-                        collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
-                        console.log('PNG EXIF Positive texts:', positiveTexts);
-                        console.log('PNG EXIF Negative texts:', negativeTexts);
-                        
-                        if (positivePrompt) {
-                            positivePrompt.value = positiveTexts.map(unescapePromptString).join('\n');
-                            autoResizeTextarea(positivePrompt);
-                        }
-                        if (negativePrompt) {
-                            negativePrompt.value = negativeTexts.map(unescapePromptString).join('\n');
-                            autoResizeTextarea(negativePrompt);
-                        }
-                        
-                        // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
-                        const wildcardTexts = [];
-                        collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
-                        const extraMetadataPrompts = [];
-                        collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
-                        console.log('PNG EXIF Wildcard texts:', wildcardTexts);
-                        console.log('PNG EXIF extraMetadata prompts:', extraMetadataPrompts);
-                        
-                        const additionalPromptsTextarea = document.getElementById('additional-prompts');
-                        if (additionalPromptsTextarea) {
-                            let combined = [];
-                            if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
-                            if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
-                            additionalPromptsTextarea.value = combined.join('\n');
-                            autoResizeTextarea(additionalPromptsTextarea);
-                        }
-                        
-                        // 3. Collect allowed keys for prompt-info-list (handle nested "inputs" and only primitives)
-                        if (promptInfoList) {
-                            promptInfoList.innerHTML = '';
-                            collectPromptInfo(parsed, (key, value) => {
-                                addMetadataItem(key, value, promptInfoList);
-                            });
-                        }
-                        clearWarning();
-                        found = true;
-                    } else {
-                        console.log('PNG EXIF text is not JSON, using as plain text');
-                        clearWarning();
-                        parseAndDisplayUserComment(comment);
-                        found = true;
-                    }
+                    distributePromptData(parsed, comment, sourceTag);
+                    found = true;
                 }
             }
-            
             if (!found) {
                 console.warn('No prompt metadata found in PNG');
                 showWarning('❌ No prompt metadata found');
@@ -995,7 +780,6 @@ function collectAllKeyValues(obj, targetKey, resultArr) {
         }
     }
 }
-
 
 // Helper: Collect only the "prompt" property from any "extraMetadata" object in a nested structure ---
 function collectExtraMetadataPromptOnly(obj, resultArr) {
@@ -1060,7 +844,6 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     }
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
-        
         // Handle text key with negative detection
         if (key === 'text' && typeof obj[key] === 'string') {
             const val = obj[key];
@@ -1069,30 +852,24 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
             } else {
                 positiveArr.push(val);
             }
-        } 
         // Handle tags key (always positive)
-        else if (key === 'tags' && typeof obj[key] === 'string') {
+        } else if (key === 'tags' && typeof obj[key] === 'string') {
             positiveArr.push(obj[key]);
-        }
         // Handle explicit positive key
-        else if ((key === 'positive' || key === 'positive_prompt') && typeof obj[key] === 'string') {
+        } else if ((key === 'positive' || key === 'positive_prompt') && typeof obj[key] === 'string') {
             positiveArr.push(obj[key]);
-        }
         // Handle explicit negative key
-        else if ((key === 'negative' || key === 'negative_prompt') && typeof obj[key] === 'string') {
+        } else if ((key === 'negative' || key === 'negative_prompt') && typeof obj[key] === 'string') {
             negativeArr.push(obj[key]);
-        }
         // Handle generic prompt key (always positive unless contains negative keywords)
-        else if (key === 'prompt' && typeof obj[key] === 'string') {
+        } else if (key === 'prompt' && typeof obj[key] === 'string') {
             const val = obj[key];
             if (/low quality|lowres|watermark|jpeg artifacts|worst quality/i.test(val)) {
                 negativeArr.push(val);
             } else {
                 positiveArr.push(val);
             }
-        }
-        // Recursively process nested objects
-        else if (typeof obj[key] === 'object') {
+        } else if (typeof obj[key] === 'object') {
             collectTextValuesWithNegatives(obj[key], positiveArr, negativeArr);
         }
     }
@@ -1143,16 +920,8 @@ function parseAndDisplayUserComment(comment) {
         // Remove any accidental double commas or leading/trailing commas/spaces
         additional = additional.replace(/,{2,}/g, ',').replace(/^[,\s]+|[,\s]+$/g, '');
     }
-    // Set textareas and auto-resize after setting value
-    if (positivePrompt) {
-        positivePrompt.value = positive;
-        autoResizeTextarea(positivePrompt);
-    }
-    if (negativePrompt) {
-        negativePrompt.value = negative;
-        autoResizeTextarea(negativePrompt);
-    }
-    // Fill prompt info list using addMetadataItem for consistent formatting
+    setAndResize(positivePrompt, positive);
+    setAndResize(negativePrompt, negative);
     if (promptInfoList) {
         promptInfoList.innerHTML = '';
         if (additional) {
@@ -1236,7 +1005,7 @@ function clearWarning() {
     }
 }
 
-// Copy textarea text using the modern clipboard API and show feedback in the .btn-label.
+// Copy textarea text using the modern clipboard API
 document.querySelectorAll('.copy-btn').forEach(btn => {
     btn.addEventListener('click', async function () {
         const targetId = btn.getAttribute('data-target');
@@ -1266,12 +1035,9 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
                     label.textContent = 'Copied!';
                     label.style.opacity = '1';
                     label.style.transition = 'opacity 0.5s';
-                    // Force reflow for transition restart if needed
                     void label.offsetWidth;
-
                     setTimeout(() => {
                         label.style.opacity = '0';
-                        // Optionally clear the text after fade out
                         setTimeout(() => {
                             label.textContent = '';
                         }, 500);
@@ -1291,7 +1057,7 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
     });
 });
 
-// Scroll-to-top arrow logic
+// Scroll-to-top arrow
 (function scrollArrow() {
     if (document.getElementById("scroll-to-top")) {
         return;
