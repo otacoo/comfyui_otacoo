@@ -15,3 +15,10 @@ For now, you can just browse to the web folder and open imginfo.html normally.
 ### TODO:
 - Better ComfyUI integration
 - Better parsing of ComfyUI info
+
+### Manual Install
+
+Go into your ComfyUI custom_node folder folder and do:
+```
+git clone https://github.com/otacoo/ComfyUI-otacoo.git
+```
