@@ -4,7 +4,8 @@ Extract generation info from images, works for both A1111/Forge and (some) Comfy
 ### Note:
 Currently adds a widget button to the ComfyUI top menu if installed as a custom_node, though the link isn't working until I figure out how to add a route to the html file...
 
-For now, you can just browse to the web folder and open imginfo.html normally.
+For now, you can just browse to the web folder and open imginfo.html normally or just download all the files in the `/web` folder.
+
 
 ### Support:
 - Supports PNG, JPEG and WEBP images
