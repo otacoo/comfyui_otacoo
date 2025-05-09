@@ -383,22 +383,29 @@ uploadArea.addEventListener('keydown', (e) => {
 });
 
 // Drag and drop events
+// Highlight uploadArea when dragging files over the page
 ['dragenter', 'dragover'].forEach(event => {
-    uploadArea.addEventListener(event, (e) => {
+    document.addEventListener(event, (e) => {
         e.preventDefault();
         e.stopPropagation();
         uploadArea.classList.add('dragover');
     });
 });
+
+// Remove highlight when leaving the page or dropping
 ['dragleave', 'drop'].forEach(event => {
-    uploadArea.addEventListener(event, (e) => {
+    document.addEventListener(event, (e) => {
         e.preventDefault();
         e.stopPropagation();
         uploadArea.classList.remove('dragover');
     });
 });
 
-uploadArea.addEventListener('drop', (e) => {
+// Handle file drop anywhere on the page
+document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only process if files are present
     const files = e.dataTransfer.files;
     if (files && files[0]) {
         fileInput.files = files;
