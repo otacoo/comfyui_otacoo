@@ -195,6 +195,46 @@ h2 {
     color: #e0e0e0;
 }
 
+.expand-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0.5em 0 1em 0;
+    user-select: none;
+    cursor: pointer;
+    gap: 0.5em;
+}
+.expand-toggle-text {
+    font-weight: 600;
+    color: #3672b6;
+    cursor: pointer;
+    outline: none;
+    transition: color 0.2s;
+}
+.expand-toggle-text:focus, .expand-toggle-text:hover {
+    color: #285a8c;
+}
+.chevron {
+    transition: transform 0.3s cubic-bezier(.4,2,.6,1);
+    transform: rotate(0deg);
+}
+.prompt-info-list.collapsed {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s cubic-bezier(.4,2,.6,1);
+    padding: 0;
+    margin: 0;
+}
+.prompt-info-list.expanded {
+    max-height: 500px;
+    transition: max-height 0.4s cubic-bezier(.4,2,.6,1);
+    padding: revert;
+    margin: revert;
+}
+.chevron.rotate {
+    transform: rotate(180deg);
+}
+
 /* Footer styles */
 .footer {
     margin-top: 3em;
@@ -260,7 +300,7 @@ h2 {
     font-size: 1em;
     font-weight: 600;
     cursor: pointer;
-    margin-top: 0.5em;
+    margin: 0.5em auto auto 9.5em;
     transition: background 0.2s, color 0.2s, box-shadow 0.2s;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
     outline: none;
