@@ -2,7 +2,6 @@
  * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
  * (c) otacoo / otakudude / doublerunes, GPLv3
  */
-
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('image-input');
 const imagePreview = document.getElementById('image-preview');
@@ -10,6 +9,7 @@ const metadataList = document.getElementById('metadata-list');
 const positivePrompt = document.getElementById('positive-prompt');
 const negativePrompt = document.getElementById('negative-prompt');
 const promptInfoList = document.getElementById('prompt-info-list');
+const modelInfoList = document.getElementById('model-info-list');
 const warningSpan = document.getElementById('warning');
 
 // --- Helper: Set textarea value and auto-resize ---
@@ -26,6 +26,22 @@ function stripPromptPrefix(str) {
     if (str.startsWith("Prompt:")) return str.substring("Prompt:".length).trim();
     if (str.startsWith("Workflow:")) return str.substring("Workflow:".length).trim();
     return str;
+}
+
+// --- Helper: Determine if a key should go to model-info-list ---
+function isModelInfoKey(key) {
+    if (!key) return false;
+    const normalized = key.trim().toLowerCase();
+    // Exact matches (case-insensitive)
+    const modelKeys = [
+        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'lora', 'lora_name', 'lora hashes'
+    ];
+    if (modelKeys.includes(normalized)) return true;
+    // lora_* or lora-* pattern (case-insensitive)
+    if (/^lora[_\-].+/i.test(normalized)) return true;
+    // "lora hashes" with any whitespace
+    if (normalized.replace(/\s+/g, '') === 'lorahashes') return true;
+    return false;
 }
 
 // --- Centralized prompt data distribution ---
@@ -54,13 +70,22 @@ function distributePromptData(parsed, comment, sourceTag) {
             setAndResize(additionalPromptsTextarea, combined.join('\n'));
         }
 
-        // 3. Collect allowed keys for prompt-info-list (also handle nested "inputs" and primitives)
-        if (promptInfoList) {
-            promptInfoList.innerHTML = '';
-            collectPromptInfo(parsed, (key, value) => {
-                addMetadataItem(key, value, promptInfoList);
-            });
-        }
+        // 3. Collect allowed keys for prompt-info-list and model-info-list
+        if (promptInfoList) promptInfoList.innerHTML = '';
+        if (modelInfoList) modelInfoList.innerHTML = '';
+        collectPromptInfo(
+            parsed,
+            (key, value) => {
+                if (!isModelInfoKey(key)) {
+                    addMetadataItem(key, value, promptInfoList);
+                }
+            },
+            (key, value) => {
+                if (isModelInfoKey(key)) {
+                    addMetadataItem(key, value, modelInfoList);
+                }
+            }
+        );
         clearWarning();
         found = true;
     }
@@ -375,6 +400,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const btn = document.getElementById('strip-metadata-btn');
     if (btn) {
+        btn.style.display = 'none'; // Hide by default
+
         btn.addEventListener('click', async function () {
             clearWarning();
             if (!fileInput.files || !fileInput.files[0]) {
@@ -407,6 +434,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 showWarning('Error stripping metadata: ' + err.message);
             }
         });
+
+        // Listen for changes on the file input to toggle button visibility
+        if (fileInput) {
+            fileInput.addEventListener('change', function () {
+                if (fileInput.files && fileInput.files.length > 0) {
+                    btn.style.display = 'inline-block';
+                } else {
+                    btn.style.display = 'none';
+                }
+            });
+        }
     }
 });
 
@@ -472,11 +510,12 @@ fileInput.addEventListener('change', (e) => {
     }
 });
 
+// --- UI clearing ---
 function clearPromptFields() {
     setAndResize(positivePrompt, '');
     setAndResize(negativePrompt, '');
     if (promptInfoList) promptInfoList.innerHTML = '';
-    // Clear the additional-prompts textarea as well
+    if (modelInfoList) modelInfoList.innerHTML = '';
     const additionalPromptsTextarea = document.getElementById('additional-prompts');
     setAndResize(additionalPromptsTextarea, '');
 }
@@ -892,33 +931,28 @@ function collectExtraMetadataPromptOnly(obj, resultArr) {
     }
 }
 
-// Helper: Collect prompt info for prompt-info-list (robust: handle nested "inputs" and only primitives)
-function collectPromptInfo(obj, cb) {
+// Helper: Collect prompt info for prompt-info-list
+function collectPromptInfo(obj, cbPrompt, cbModel) {
     if (typeof obj !== 'object' || obj === null) return;
     if (Array.isArray(obj)) {
         for (const item of obj) {
-            collectPromptInfo(item, cb);
+            collectPromptInfo(item, cbPrompt, cbModel);
         }
         return;
     }
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
-        if (key === 'inputs' && typeof obj[key] === 'object' && obj[key] !== null) {
-            for (const subKey in obj[key]) {
-                if (obj[key].hasOwnProperty(subKey)) {
-                    const value = obj[key][subKey];
-                    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-                        cb(subKey, value);
-                    }
+        const value = obj[key];
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            if (key !== 'populated_text' && key !== 'wildcard_text') {
+                if (isModelInfoKey(key)) {
+                    cbModel(key, value);
+                } else {
+                    cbPrompt(key, value);
                 }
             }
-        } else if (typeof obj[key] === 'string' || typeof obj[key] === 'number' || typeof obj[key] === 'boolean') {
-            // Only show primitive values, skip objects/arrays
-            if (key !== 'populated_text' && key !== 'wildcard_text') {
-                cb(key, obj[key]);
-            }
-        } else if (typeof obj[key] === 'object') {
-            collectPromptInfo(obj[key], cb);
+        } else if (typeof value === 'object' && value !== null) {
+            collectPromptInfo(value, cbPrompt, cbModel);
         }
     }
 }
@@ -1012,21 +1046,26 @@ function parseAndDisplayUserComment(comment) {
     }
     setAndResize(positivePrompt, positive);
     setAndResize(negativePrompt, negative);
-    if (promptInfoList) {
-        promptInfoList.innerHTML = '';
-        if (additional) {
-            const items = splitPromptInfo(additional);
-            for (const item of items) {
-                // Try to split into label and value at the first colon
-                const colonIdx = item.indexOf(':');
-                if (colonIdx !== -1) {
-                    const label = item.slice(0, colonIdx).trim();
-                    const value = item.slice(colonIdx + 1).trim();
-                    addMetadataItem(label, value, promptInfoList);
+
+    // --- Enhanced: Split additional into items, route model keys to model-info-list ---
+    if (promptInfoList) promptInfoList.innerHTML = '';
+    if (modelInfoList) modelInfoList.innerHTML = '';
+    if (additional) {
+        const items = splitPromptInfo(additional);
+        for (const item of items) {
+            // Try to split into label and value at the first colon
+            const colonIdx = item.indexOf(':');
+            if (colonIdx !== -1) {
+                const label = item.slice(0, colonIdx).trim();
+                const value = item.slice(colonIdx + 1).trim();
+                if (isModelInfoKey(label)) {
+                    addMetadataItem(label, value, modelInfoList);
                 } else {
-                    // If no colon, just display as value with empty label
-                    addMetadataItem('', item.trim(), promptInfoList);
+                    addMetadataItem(label, value, promptInfoList);
                 }
+            } else {
+                // If no colon, just display as value with empty label
+                addMetadataItem('', item.trim(), promptInfoList);
             }
         }
     }
