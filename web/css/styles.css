@@ -17,6 +17,12 @@ body {
     color: #ffffff;
 }
 
+.container,
+.prompt-container,
+.additional-container {
+    max-height: 89vh;
+}
+
 /* Copy buttons */
 .copy-row {
     display: flex;
@@ -77,7 +83,7 @@ body {
 h1 {
     text-align: center;
     color: #ffffff;
-    margin-bottom: 15px;
+    margin: 0;
 }
 
 h2 {
@@ -94,7 +100,7 @@ h2 {
     background: #fafafa;
     cursor: pointer;
     transition: border-color 0.2s, background 0.2s;
-    margin-bottom: 1em;
+    margin: 2em 0 2em 0;
     position: relative;
 }
 
@@ -187,6 +193,7 @@ h2 {
     list-style: none;
     padding: 0;
     overflow-wrap: break-word;
+    min-height: 110px;
 }
 
 .prompt-info-list li,
@@ -214,25 +221,29 @@ h2 {
 .expand-toggle-text:focus, .expand-toggle-text:hover {
     color: #285a8c;
 }
+
+.additional-container.collapsed .prompt-info-list {
+    display: none;
+}
+
+.model-info-list,
+.additional-container.expanded .prompt-info-list {
+    display: block;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+}
+
 .chevron {
-    transition: transform 0.3s cubic-bezier(.4,2,.6,1);
-    transform: rotate(0deg);
+    transition: transform 0.3s;
 }
-.prompt-info-list.collapsed {
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.4s cubic-bezier(.4,2,.6,1);
-    padding: 0;
-    margin: 0;
+
+.chevron-left.rotate {
+    transform: rotate(90deg);
 }
-.prompt-info-list.expanded {
-    max-height: 500px;
-    transition: max-height 0.4s cubic-bezier(.4,2,.6,1);
-    padding: revert;
-    margin: revert;
-}
-.chevron.rotate {
-    transform: rotate(180deg);
+
+.chevron-right.rotate {
+    transform: rotate(-90deg);
 }
 
 /* Footer styles */

@@ -394,15 +394,90 @@ class PNGMetadata {
 }
 
 // --- Page events and UI logic ---
+// --- Page events and UI logic ---
 document.addEventListener('DOMContentLoaded', () => {
     clearPromptFields();
     clearWarning();
 
-    const btn = document.getElementById('strip-metadata-btn');
-    if (btn) {
-        btn.style.display = 'none'; // Hide by default
+    // --- DOM element references ---
+    const toggleText = document.getElementById('additional-info-toggle-text');
+    const chevrons = document.querySelectorAll('.expand-toggle-row .chevron');
+    const additionalContainer = document.querySelector('.additional-container');
+    const toggleRow = document.getElementById('additional-info-toggle-row');
+    const fileInput = document.getElementById('image-input');
+    const stripMetadataBtn = document.getElementById('strip-metadata-btn');
 
-        btn.addEventListener('click', async function () {
+    let expanded = false;
+
+    // --- Helper: Show/hide the toggle row and strip metadata button ---
+    function setToggleRowVisible(visible) {
+        if (toggleRow) toggleRow.style.display = visible ? 'flex' : 'none';
+    }
+    function setStripMetadataBtnVisible(visible) {
+        if (stripMetadataBtn) stripMetadataBtn.style.display = visible ? 'block' : 'none';
+    }
+
+    // --- Helper: Set expanded/collapsed state for additional info ---
+    function setExpanded(state) {
+        expanded = !!state;
+        additionalContainer.classList.toggle('expanded', expanded);
+        additionalContainer.classList.toggle('collapsed', !expanded);
+        toggleText.textContent = expanded ? 'Hide additional info' : 'Show additional info';
+        toggleText.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        chevrons.forEach(chev => chev.classList.toggle('rotate', expanded));
+    }
+
+    // --- Expose for programmatic use if needed ---
+    window.showExpandedInfo = function () { setExpanded(true); };
+    window.hideExpandedInfo = function () { setExpanded(false); };
+
+    // --- Expose for prompt metadata control ---
+    window.setPromptInfoAvailable = function(hasPromptInfo) {
+        setToggleRowVisible(!!hasPromptInfo);
+        setStripMetadataBtnVisible(!!hasPromptInfo);
+        if (!hasPromptInfo) setExpanded(false);
+    };
+
+    setExpanded(false);
+    setToggleRowVisible(false); // Hide toggle row on page load
+    setStripMetadataBtnVisible(false); // Hide strip metadata button on page load
+
+    // --- Toggle expand/collapse on click or keyboard ---
+    if (toggleRow) {
+        toggleRow.addEventListener('click', (e) => {
+            if (
+                e.target === toggleText ||
+                e.target.classList.contains('chevron')
+            ) {
+                setExpanded(!expanded);
+            }
+        });
+        toggleText.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                setExpanded(!expanded);
+                e.preventDefault();
+            }
+        });
+    }
+
+    // --- Hide both toggle row and strip metadata button on file input change ---
+    if (fileInput) {
+        fileInput.addEventListener('change', function () {
+            // --- Clear prompt fields and warning on new image selection ---
+            clearPromptFields();
+            clearWarning();
+
+            // --- Hide both until prompt metadata is found ---
+            setToggleRowVisible(false);
+            setStripMetadataBtnVisible(false);
+
+            setExpanded(false); // Optionally collapse when new image is selected
+        });
+    }
+
+    // --- Strip Metadata Button Logic ---
+    if (stripMetadataBtn) {
+        stripMetadataBtn.addEventListener('click', async function () {
             clearWarning();
             if (!fileInput.files || !fileInput.files[0]) {
                 showWarning('No image loaded.');
@@ -434,17 +509,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 showWarning('Error stripping metadata: ' + err.message);
             }
         });
-
-        // Listen for changes on the file input to toggle button visibility
-        if (fileInput) {
-            fileInput.addEventListener('change', function () {
-                if (fileInput.files && fileInput.files.length > 0) {
-                    btn.style.display = 'inline-block';
-                } else {
-                    btn.style.display = 'none';
-                }
-            });
-        }
     }
 });
 
@@ -653,7 +717,7 @@ function extractExifMetadata(file) {
             addMetadataItem('EXIF', 'No EXIF data found');
         } else if (file.type === 'image/webp') {
             // WebP EXIF is rare, just note presence
-            addMetadataItem('EXIF', 'EXIF extraction for WebP may not be supported');
+            addMetadataItem('EXIF', 'EXIF metadata found');
         }
     };
     reader.readAsArrayBuffer(file);
@@ -730,11 +794,13 @@ function extractUserCommentFromJPEG(file) {
         }
         console.log('Selected comment source:', sourceTag, 'Value:', comment);
         if (comment) {
+            window.setPromptInfoAvailable(true);
             let jsonStr = stripPromptPrefix(comment.trim());
             let parsed = safeJsonParse(jsonStr);
             distributePromptData(parsed, comment, sourceTag);
         } else {
             showWarning('❌ No metadata found');
+            window.setPromptInfoAvailable(false);
         }
     });
 }
@@ -751,11 +817,12 @@ function extractUserCommentFromWebp(file) {
             if (typeof exifData["Make"] === 'string' && exifData["Make"].trim()) {
                 candidate = exifData["Make"];
                 sourceTag = 'Make';
-            // Fallback: try numeric key 271
+                // Fallback: try numeric key 271
             } else if (typeof exifData[271] === 'string' && exifData[271].trim()) {
                 candidate = exifData[271];
                 sourceTag = '271';
             }
+            window.setPromptInfoAvailable(true);
         }
         console.log('Selected WebP comment source:', sourceTag, 'Value:', candidate);
         if (candidate) {
@@ -769,6 +836,7 @@ function extractUserCommentFromWebp(file) {
                 clearWarning();
                 parseAndDisplayUserComment(comment);
             } else {
+                window.setPromptInfoAvailable(false);
                 showWarning('❌ No metadata found');
             }
         }
@@ -798,6 +866,7 @@ function extractPngMetadata(file) {
                             if (["prompt", "parameters", "usercomment"].includes(keyword.toLowerCase())) {
                                 let promptText = text;
                                 console.log('Found PNG metadata with keyword:', keyword);
+                                window.setPromptInfoAvailable(true);
                                 let parsed = safeJsonParse(promptText);
                                 distributePromptData(parsed, promptText, keyword);
                                 found = true;
@@ -862,6 +931,7 @@ function extractPngMetadata(file) {
             }
             if (!found) {
                 console.warn('No prompt metadata found in PNG');
+                window.setPromptInfoAvailable(false);
                 showWarning('❌ No prompt metadata found');
             }
         } catch (err) {
@@ -976,16 +1046,16 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
             } else {
                 positiveArr.push(val);
             }
-        // Handle tags key (always positive)
+            // Handle tags key (always positive)
         } else if (key === 'tags' && typeof obj[key] === 'string') {
             positiveArr.push(obj[key]);
-        // Handle explicit positive key
+            // Handle explicit positive key
         } else if ((key === 'positive' || key === 'positive_prompt') && typeof obj[key] === 'string') {
             positiveArr.push(obj[key]);
-        // Handle explicit negative key
+            // Handle explicit negative key
         } else if ((key === 'negative' || key === 'negative_prompt') && typeof obj[key] === 'string') {
             negativeArr.push(obj[key]);
-        // Handle generic prompt key (always positive unless contains negative keywords)
+            // Handle generic prompt key (always positive unless contains negative keywords)
         } else if (key === 'prompt' && typeof obj[key] === 'string') {
             const val = obj[key];
             if (/low quality|lowres|watermark|jpeg artifacts|worst quality/i.test(val)) {
