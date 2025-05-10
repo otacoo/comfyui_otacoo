@@ -1,3 +1,4 @@
+//v1.0.0
 import { app } from "../../scripts/app.js";
 
 const extension = {
