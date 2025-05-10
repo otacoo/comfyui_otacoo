@@ -6,7 +6,7 @@ Extract generation info from images, works for both A1111/Forge and (some) Comfy
 
 Go into your ComfyUI `custom_nodes` folder folder, open a terminal and do:
 ```
-git clone https://github.com/otacoo/ComfyUI-otacoo.git
+git clone https://github.com/otacoo/comfyui_otacoo.git
 ```
 
 
