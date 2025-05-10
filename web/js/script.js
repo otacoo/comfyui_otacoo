@@ -29,8 +29,17 @@ function stripPromptPrefix(str) {
 }
 
 // --- Helper: Determine if a key should go to model-info-list ---
-function isModelInfoKey(key) {
+function isModelInfoKey(key, value) {
     if (!key) return false;
+    // Skip if value is missing, empty, or 'none'
+    if (
+        value === undefined ||
+        value === null ||
+        (typeof value === 'string' && value.trim().toLowerCase() === 'none') ||
+        (typeof value === 'string' && value.trim() === '')
+    ) {
+        return false;
+    }
     const normalized = key.trim().toLowerCase();
     // Exact matches (case-insensitive)
     const modelKeys = [
@@ -76,12 +85,12 @@ function distributePromptData(parsed, comment, sourceTag) {
         collectPromptInfo(
             parsed,
             (key, value) => {
-                if (!isModelInfoKey(key)) {
+                if (!isModelInfoKey(key, value)) {
                     addMetadataItem(key, value, promptInfoList);
                 }
             },
             (key, value) => {
-                if (isModelInfoKey(key)) {
+                if (isModelInfoKey(key, value)) {
                     addMetadataItem(key, value, modelInfoList);
                 }
             }
@@ -393,7 +402,6 @@ class PNGMetadata {
     }
 }
 
-// --- Page events and UI logic ---
 // --- Page events and UI logic ---
 document.addEventListener('DOMContentLoaded', () => {
     clearPromptFields();
@@ -1015,7 +1023,7 @@ function collectPromptInfo(obj, cbPrompt, cbModel) {
         const value = obj[key];
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
             if (key !== 'populated_text' && key !== 'wildcard_text') {
-                if (isModelInfoKey(key)) {
+                if (isModelInfoKey(key, value)) {
                     cbModel(key, value);
                 } else {
                     cbPrompt(key, value);
@@ -1111,7 +1119,7 @@ function parseAndDisplayUserComment(comment) {
     setAndResize(positivePrompt, positive);
     setAndResize(negativePrompt, negative);
 
-    // --- Enhanced: Split additional into items, route model keys to model-info-list ---
+    // --- Split additional into items, route model keys to model-info-list ---
     if (promptInfoList) promptInfoList.innerHTML = '';
     if (modelInfoList) modelInfoList.innerHTML = '';
     if (additional) {
@@ -1122,7 +1130,7 @@ function parseAndDisplayUserComment(comment) {
             if (colonIdx !== -1) {
                 const label = item.slice(0, colonIdx).trim();
                 const value = item.slice(colonIdx + 1).trim();
-                if (isModelInfoKey(label)) {
+                if (isModelInfoKey(label, value)) {
                     addMetadataItem(label, value, modelInfoList);
                 } else {
                     addMetadataItem(label, value, promptInfoList);
