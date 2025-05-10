@@ -43,7 +43,7 @@ function isModelInfoKey(key, value) {
     const normalized = key.trim().toLowerCase();
     // Exact matches (case-insensitive)
     const modelKeys = [
-        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'lora', 'lora_name', 'lora hashes'
+        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelName', 'lora', 'lora_name', 'lora hashes'
     ];
     if (modelKeys.includes(normalized)) return true;
     // lora_* or lora-* pattern (case-insensitive)
@@ -739,6 +739,10 @@ function safeJsonParse(str) {
     }
     // Trim the string
     let fixed = str.trim();
+    // Only try to parse if it looks like JSON
+    if (!(fixed.startsWith('{') || fixed.startsWith('['))) {
+        return null;
+    }
     // Unescape double-backslash newlines
     fixed = fixed.replace(/\\\\n/g, "\\n");
     // Replace NaN with null (JSON does not support NaN)
@@ -1021,14 +1025,44 @@ function collectPromptInfo(obj, cbPrompt, cbModel) {
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
         const value = obj[key];
-        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-            if (key !== 'populated_text' && key !== 'wildcard_text') {
-                if (isModelInfoKey(key, value)) {
-                    cbModel(key, value);
-                } else {
-                    cbPrompt(key, value);
-                }
+        if (isModelInfoKey(key, value)) {
+            // If value is primitive, add directly
+            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                cbModel(key, value);
             }
+            // If value is an array of objects, display as a sub-list
+            else if (Array.isArray(value) && value.length > 0 && value.every(v => typeof v === 'object')) {
+                // Build a sub-list as HTML
+                let html = '<ul style="margin:0 0 0 1.5em;padding:0;">';
+                value.forEach((item, idx) => {
+                    if (typeof item === 'object' && item !== null) {
+                        html += '<li style="margin-bottom:0.5em;">';
+                        html += '<ul style="margin:0 0 0 1.5em;padding:0;">';
+                        for (const subKey in item) {
+                            if (!item.hasOwnProperty(subKey)) continue;
+                            html += `<li><strong>${subKey}:</strong> ${item[subKey]}</li>`;
+                        }
+                        html += '</ul>';
+                        html += '</li>';
+                    } else {
+                        html += `<li>${item}</li>`;
+                    }
+                });
+                html += '</ul>';
+                cbModel(key, html);
+            }
+            // If value is an object, pretty-print as key-value pairs
+            else if (typeof value === 'object' && value !== null) {
+                let html = '<ul style="margin:0 0 0 1.5em;padding:0;">';
+                for (const subKey in value) {
+                    if (!value.hasOwnProperty(subKey)) continue;
+                    html += `<li><strong>${subKey}:</strong> ${value[subKey]}</li>`;
+                }
+                html += '</ul>';
+                cbModel(key, html);
+            }
+        } else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            cbPrompt(key, value);
         } else if (typeof value === 'object' && value !== null) {
             collectPromptInfo(value, cbPrompt, cbModel);
         }
@@ -1131,13 +1165,19 @@ function parseAndDisplayUserComment(comment) {
                 const label = item.slice(0, colonIdx).trim();
                 const value = item.slice(colonIdx + 1).trim();
                 if (isModelInfoKey(label, value)) {
-                    addMetadataItem(label, value, modelInfoList);
+                    // Try to parse value as JSON array/object for pretty display
+                    let prettyValue = value;
+                    try {
+                        if (typeof value === 'string' && (value.trim().startsWith('[') || value.trim().startsWith('{'))) {
+                            prettyValue = JSON.stringify(JSON.parse(value), null, 2);
+                        }
+                    } catch (e) {
+                        // leave as is if not valid JSON
+                    }
+                    addMetadataItem(label, prettyValue, modelInfoList);
                 } else {
                     addMetadataItem(label, value, promptInfoList);
                 }
-            } else {
-                // If no colon, just display as value with empty label
-                addMetadataItem('', item.trim(), promptInfoList);
             }
         }
     }
