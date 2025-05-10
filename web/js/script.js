@@ -2,6 +2,8 @@
  * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
  * (c) otacoo / otakudude / doublerunes, GPLv3
  */
+
+// --- DOM element references ---
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('image-input');
 const imagePreview = document.getElementById('image-preview');
@@ -23,9 +25,7 @@ function setAndResize(textarea, value) {
 // --- Helper: Strip "Prompt:" or "Workflow:" prefix ---
 function stripPromptPrefix(str) {
     if (typeof str !== 'string') return str;
-    if (str.startsWith("Prompt:")) return str.substring("Prompt:".length).trim();
-    if (str.startsWith("Workflow:")) return str.substring("Workflow:".length).trim();
-    return str;
+    return str.replace(/^(Prompt:|Workflow:)/, '').trim();
 }
 
 // --- Helper: Determine if a key should go to model-info-list ---
@@ -41,16 +41,17 @@ function isModelInfoKey(key, value) {
         return false;
     }
     const normalized = key.trim().toLowerCase();
-    // Exact matches (case-insensitive)
     const modelKeys = [
-        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelName', 'lora', 'lora_name', 'lora hashes'
+        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelname', 'lora', 'lora_name', 'lora hashes'
     ];
-    if (modelKeys.includes(normalized)) return true;
-    // lora_* or lora-* pattern (case-insensitive)
-    if (/^lora[_\-].+/i.test(normalized)) return true;
-    // "lora hashes" with any whitespace
-    if (normalized.replace(/\s+/g, '') === 'lorahashes') return true;
-    return false;
+    return (
+        modelKeys.includes(normalized) ||
+        // lora_* or lora-* pattern (case-insensitive)
+        /^lora[_\-].+/i.test(normalized) ||
+        // "lora hashes" with any whitespace
+        normalized.replace(/\s+/g, '') === 'lorahashes' ||
+        /^model[_]?name$/.test(normalized)
+    );
 }
 
 // --- Centralized prompt data distribution ---
@@ -73,15 +74,14 @@ function distributePromptData(parsed, comment, sourceTag) {
 
         const additionalPromptsTextarea = document.getElementById('additional-prompts');
         if (additionalPromptsTextarea) {
-            let combined = [];
-            if (wildcardTexts.length) combined = combined.concat(wildcardTexts);
-            if (extraMetadataPrompts.length) combined = combined.concat(extraMetadataPrompts);
+            let combined = [...wildcardTexts, ...extraMetadataPrompts];
             setAndResize(additionalPromptsTextarea, combined.join('\n'));
         }
 
         // 3. Collect allowed keys for prompt-info-list and model-info-list
         if (promptInfoList) promptInfoList.innerHTML = '';
         if (modelInfoList) modelInfoList.innerHTML = '';
+        // Add all prompt info as before
         collectPromptInfo(
             parsed,
             (key, value) => {
@@ -95,6 +95,11 @@ function distributePromptData(parsed, comment, sourceTag) {
                 }
             }
         );
+        // Walk further for nested model info keys (e.g. modelName/modelVersionName in Civitai arrays/objects)
+        walkForModelInfo(parsed, (k, v) => {
+            // Only add if not already present (avoid duplicates)
+            // addMetadataItem(k, v, modelInfoList);
+        });
         clearWarning();
         found = true;
     }
@@ -440,7 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.hideExpandedInfo = function () { setExpanded(false); };
 
     // --- Expose for prompt metadata control ---
-    window.setPromptInfoAvailable = function(hasPromptInfo) {
+    window.setPromptInfoAvailable = function (hasPromptInfo) {
         setToggleRowVisible(!!hasPromptInfo);
         setStripMetadataBtnVisible(!!hasPromptInfo);
         if (!hasPromptInfo) setExpanded(false);
@@ -767,7 +772,7 @@ function safeJsonParse(str) {
                     if (typeof result === 'object' && result !== null) {
                         console.warn('Used Function constructor as fallback for JSON parsing');
                         return result;
-                    }
+                }
                 }
             } catch (err3) {
                 // Cut my life into pieces, this is my last resort
@@ -971,9 +976,7 @@ function findFirstKeyValue(obj, targetKey) {
     return null;
 }
 
-/* Helper: Collect all values for a key in a nested object
-*  Usage: collectAllKeyValues(obj, 'text', arr)
-*/
+// --- Helper: Collect all values for a key in a nested object ---
 function collectAllKeyValues(obj, targetKey, resultArr) {
     if (typeof obj !== 'object' || obj === null) return;
     if (Array.isArray(obj)) {
@@ -992,13 +995,11 @@ function collectAllKeyValues(obj, targetKey, resultArr) {
     }
 }
 
-// Helper: Collect only the "prompt" property from any "extraMetadata" object in a nested structure ---
+// --- Helper: Collect only the "prompt" property from any "extraMetadata" object in a nested structure ---
 function collectExtraMetadataPromptOnly(obj, resultArr) {
     if (typeof obj !== 'object' || obj === null) return;
     if (Array.isArray(obj)) {
-        for (const item of obj) {
-            collectExtraMetadataPromptOnly(item, resultArr);
-        }
+        obj.forEach(item => collectExtraMetadataPromptOnly(item, resultArr));
         return;
     }
     for (const key in obj) {
@@ -1013,13 +1014,11 @@ function collectExtraMetadataPromptOnly(obj, resultArr) {
     }
 }
 
-// Helper: Collect prompt info for prompt-info-list
+// --- Helper: Collect prompt info for prompt-info-list and model-info-list ---
 function collectPromptInfo(obj, cbPrompt, cbModel) {
     if (typeof obj !== 'object' || obj === null) return;
     if (Array.isArray(obj)) {
-        for (const item of obj) {
-            collectPromptInfo(item, cbPrompt, cbModel);
-        }
+        obj.forEach(item => collectPromptInfo(item, cbPrompt, cbModel));
         return;
     }
     for (const key in obj) {
@@ -1034,16 +1033,14 @@ function collectPromptInfo(obj, cbPrompt, cbModel) {
             else if (Array.isArray(value) && value.length > 0 && value.every(v => typeof v === 'object')) {
                 // Build a sub-list as HTML
                 let html = '<ul style="margin:0 0 0 1.5em;padding:0;">';
-                value.forEach((item, idx) => {
+                value.forEach(item => {
                     if (typeof item === 'object' && item !== null) {
-                        html += '<li style="margin-bottom:0.5em;">';
-                        html += '<ul style="margin:0 0 0 1.5em;padding:0;">';
+                        html += '<li style="margin-bottom:0.5em;"><ul style="margin:0 0 0 1.5em;padding:0;">';
                         for (const subKey in item) {
                             if (!item.hasOwnProperty(subKey)) continue;
                             html += `<li><strong>${subKey}:</strong> ${item[subKey]}</li>`;
                         }
-                        html += '</ul>';
-                        html += '</li>';
+                        html += '</ul></li>';
                     } else {
                         html += `<li>${item}</li>`;
                     }
@@ -1073,9 +1070,7 @@ function collectPromptInfo(obj, cbPrompt, cbModel) {
 function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     if (typeof obj !== 'object' || obj === null) return;
     if (Array.isArray(obj)) {
-        for (const item of obj) {
-            collectTextValuesWithNegatives(item, positiveArr, negativeArr);
-        }
+        obj.forEach(item => collectTextValuesWithNegatives(item, positiveArr, negativeArr));
         return;
     }
     // Define keys to check for prompt text
@@ -1090,11 +1085,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         if (!obj.hasOwnProperty(key)) continue;
         const value = obj[key];
         if (promptKeys.includes(key) && typeof value === 'string') {
-            if (negativeRegex.test(value)) {
-                negativeArr.push(value);
-            } else {
-                positiveArr.push(value);
-            }
+            (negativeRegex.test(value) ? negativeArr : positiveArr).push(value);
         } else if (positiveKeys.includes(key) && typeof value === 'string') {
             positiveArr.push(value);
         } else if (negativeKeys.includes(key) && typeof value === 'string') {
@@ -1105,6 +1096,41 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     }
 }
 
+// --- Helper: Recursively walk object/array for model info keys and call cbModel for each found. ---
+function walkForModelInfo(obj, cbModel) {
+    if (Array.isArray(obj)) {
+        obj.forEach(item => walkForModelInfo(item, cbModel));
+    } else if (typeof obj === 'object' && obj !== null) {
+        for (const k in obj) {
+            if (!obj.hasOwnProperty(k)) continue;
+            const v = obj[k];
+            if (isModelInfoKey(k, v) && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) {
+                cbModel(k, v);
+            }
+            if (typeof v === 'object' && v !== null) {
+                walkForModelInfo(v, cbModel);
+            }
+        }
+    }
+}
+
+// --- Helper: Extract JSON value from a string using bracket matching ---
+function extractJsonValue(str, startIdx) {
+    // str: the full string
+    // startIdx: index of the first '[' or '{'
+    let open = str[startIdx];
+    let close = open === '[' ? ']' : '}';
+    let depth = 0;
+    for (let i = startIdx; i < str.length; i++) {
+        if (str[i] === open) depth++;
+        if (str[i] === close) depth--;
+        if (depth === 0) {
+            return str.slice(startIdx, i + 1);
+        }
+    }
+    return null; // Not found
+}
+
 /**
  * Parse the UserComment string and distribute to UI elements.
  * - All text until "Negative prompt:" (excluded) -> #positive-prompt
@@ -1112,6 +1138,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
  * - "Steps:" and everything after -> #prompt-info-list (as <li>s)
  * - Remove initial "UNICODE" if present
  * - Remove Template: "..." and any text within the double quotes (including the quotes)
+ * - Enhanced: Recursively extract model info keys from JSON-like values in additional info.
  */
 function parseAndDisplayUserComment(comment) {
     // Remove "UNICODE" at the start if present
@@ -1122,9 +1149,7 @@ function parseAndDisplayUserComment(comment) {
     // Find "Negative prompt:" and "Steps:"
     const negPromptIdx = comment.indexOf('Negative prompt:');
     const stepsIdx = comment.indexOf('Steps:');
-    let positive = '';
-    let negative = '';
-    let additional = '';
+    let positive = '', negative = '', additional = '';
     if (negPromptIdx !== -1) {
         positive = comment.substring(0, negPromptIdx).trim();
         if (stepsIdx !== -1 && stepsIdx > negPromptIdx) {
@@ -1142,14 +1167,6 @@ function parseAndDisplayUserComment(comment) {
             positive = comment.trim();
         }
     }
-    // Remove Template: "..." and Hires prompt: "..." and any text within the double quotes (including the quotes)
-    if (additional) {
-        // This regex matches: Template: " ... " or Hires prompt: " ... " (including any content inside the quotes, non-greedy)
-        // and also removes any leading/trailing commas and whitespace left behind
-        additional = additional.replace(/,?\s*(Template|Hires prompt):\s*"[^"]*"\s*,?/g, ', ');
-        // Remove any accidental double commas or leading/trailing commas/spaces
-        additional = additional.replace(/,{2,}/g, ',').replace(/^[,\s]+|[,\s]+$/g, '');
-    }
     setAndResize(positivePrompt, positive);
     setAndResize(negativePrompt, negative);
 
@@ -1159,22 +1176,33 @@ function parseAndDisplayUserComment(comment) {
     if (additional) {
         const items = splitPromptInfo(additional);
         for (const item of items) {
-            // Try to split into label and value at the first colon
             const colonIdx = item.indexOf(':');
             if (colonIdx !== -1) {
                 const label = item.slice(0, colonIdx).trim();
-                const value = item.slice(colonIdx + 1).trim();
-                if (isModelInfoKey(label, value)) {
-                    // Try to parse value as JSON array/object for pretty display
-                    let prettyValue = value;
+                let value = item.slice(colonIdx + 1).trim();
+                // If value starts with [ or { but does not end with ] or }, try to extract the full JSON value from the original string
+                if ((value.startsWith('[') && !value.endsWith(']')) || (value.startsWith('{') && !value.endsWith('}'))) {
+                    // Find the position of value in the original string
+                    let startIdx = additional.indexOf(value);
+                    let fullJson = extractJsonValue(additional, startIdx);
+                    if (fullJson) value = fullJson;
+                }
+                let parsedValue = value;
+                let parsedSuccessfully = false;
+                if (typeof value === 'string' && (value.trim().startsWith('[') || value.trim().startsWith('{'))) {
                     try {
-                        if (typeof value === 'string' && (value.trim().startsWith('[') || value.trim().startsWith('{'))) {
-                            prettyValue = JSON.stringify(JSON.parse(value), null, 2);
-                        }
+                        console.log('Trying to parse as JSON:', value);
+                        parsedValue = JSON.parse(value);
+                        parsedSuccessfully = true;
+                        console.log('Parsed JSON:', parsedValue);
                     } catch (e) {
-                        // leave as is if not valid JSON
+                        console.warn('Failed to parse JSON:', value, e);
                     }
-                    addMetadataItem(label, prettyValue, modelInfoList);
+                }
+                if (parsedSuccessfully && (Array.isArray(parsedValue) || typeof parsedValue === 'object')) {
+                    walkForModelInfo(parsedValue, (k, v) => addMetadataItem(k, v, modelInfoList));
+                } else if (isModelInfoKey(label, value)) {
+                    addMetadataItem(label, value, modelInfoList);
                 } else {
                     addMetadataItem(label, value, promptInfoList);
                 }
@@ -1184,19 +1212,21 @@ function parseAndDisplayUserComment(comment) {
 }
 
 /**
- * Split the additional prompt info into items, respecting commas inside parentheses.
- * E.g. "Steps: 30, Sampler: DPM++ 2M, Model: foo (bar, baz), Seed: 123"
- * Should split into ["Steps: 30", "Sampler: DPM++ 2M", "Model: foo (bar, baz)", "Seed: 123"]
+ * Split the additional prompt info into items, respecting commas inside parentheses/brackets/braces.
  */
 function splitPromptInfo(str) {
     const result = [];
     let current = '';
-    let parenDepth = 0;
+    let parenDepth = 0, bracketDepth = 0, braceDepth = 0;
     for (let i = 0; i < str.length; ++i) {
         const c = str[i];
         if (c === '(') parenDepth++;
         if (c === ')') parenDepth--;
-        if (c === ',' && parenDepth === 0) {
+        if (c === '[') bracketDepth++;
+        if (c === ']') bracketDepth--;
+        if (c === '{') braceDepth++;
+        if (c === '}') braceDepth--;
+        if (c === ',' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
             result.push(current);
             current = '';
             // Skip the space after comma if present
@@ -1223,14 +1253,17 @@ function addMetadataItem(label, value, listElement) {
     (listElement || metadataList).appendChild(li);
 }
 
-// Auto-resize a textarea to fit its content.
-function autoResizeTextarea(textarea) {
-    if (!textarea) return;
-    textarea.style.height = 'auto'; // Reset height
-    textarea.style.height = (textarea.scrollHeight + 2) + 'px'; // Add 2px for border
+// --- UI clearing ---
+function clearPromptFields() {
+    setAndResize(positivePrompt, '');
+    setAndResize(negativePrompt, '');
+    if (promptInfoList) promptInfoList.innerHTML = '';
+    if (modelInfoList) modelInfoList.innerHTML = '';
+    const additionalPromptsTextarea = document.getElementById('additional-prompts');
+    setAndResize(additionalPromptsTextarea, '');
 }
 
-// Show a warning message in #warning span.
+// --- Show/clear warning ---
 function showWarning(msg) {
     if (warningSpan) {
         warningSpan.textContent = msg;
@@ -1246,7 +1279,14 @@ function clearWarning() {
     }
 }
 
-// Copy textarea text using the modern clipboard API
+// --- Auto-resize a textarea to fit its content. ---
+function autoResizeTextarea(textarea) {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = (textarea.scrollHeight + 2) + 'px';
+}
+
+// --- Copy textarea text using the modern clipboard API ---
 document.querySelectorAll('.copy-btn').forEach(btn => {
     btn.addEventListener('click', async function () {
         const targetId = btn.getAttribute('data-target');
@@ -1260,7 +1300,6 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
                     label.style.opacity = '1';
                     label.style.transition = 'opacity 0.5s';
                     void label.offsetWidth;
-
                     setTimeout(() => {
                         label.style.opacity = '0';
                         setTimeout(() => {
@@ -1284,7 +1323,7 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
                         }, 500);
                     }, 2000);
                 }
-            } catch (err) {
+            } catch {
                 if (label) {
                     label.textContent = 'Copy failed';
                     label.style.opacity = '1';
@@ -1298,11 +1337,9 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
     });
 });
 
-// Scroll-to-top arrow
+// --- Scroll-to-top arrow ---
 (function scrollArrow() {
-    if (document.getElementById("scroll-to-top")) {
-        return;
-    }
+    if (document.getElementById("scroll-to-top")) return;
     const upBtn = document.createElement("button");
     upBtn.id = "scroll-to-top";
     upBtn.className = "scroll-arrow-btn";
