@@ -1,4 +1,4 @@
-# SD-Metadata-Extractor
+# SD-Metadata-Extractor ✨
 Extract generation info from images, works for both A1111/Forge and (some) ComfyUI types of metadata.
 
 
