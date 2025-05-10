@@ -810,6 +810,13 @@ function extractUserCommentFromJPEG(file) {
             sourceTag = 'ImageDescription';
         }
         console.log('Selected comment source:', sourceTag, 'Value:', comment);
+        if (
+            comment &&
+            typeof comment === 'string' &&
+            comment.trim().startsWith('UNICODE')
+        ) {
+            setExpanded(true);
+        }
         if (comment) {
             window.setPromptInfoAvailable(true);
             let jsonStr = stripPromptPrefix(comment.trim());
@@ -1076,10 +1083,10 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     // Define keys to check for prompt text
     const promptKeys = ['text', 'tags', 'string', 'prompt'];
     // Define keys for explicit positive/negative prompts
-    const positiveKeys = ['positive', 'positive_prompt'];
+    const positiveKeys = ['positive', 'positive_prompt', 'populated_text'];
     const negativeKeys = ['negative', 'negative_prompt'];
     // Negative keyword regex
-    const negativeRegex = /low quality|lowres|watermark|jpeg artifacts|worst quality/i;
+    const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality/i;
 
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
