@@ -1,10 +1,13 @@
 # SD-Metadata-Extractor
 Extract generation info from images, works for both A1111/Forge and (some) ComfyUI types of metadata.
 
-### Note:
-Currently adds a widget button to the ComfyUI top menu if installed as a custom_node, though the link isn't working until I figure out how to add a route to the html file...
 
-For now, you can just browse to the web folder and open imginfo.html normally or just download all the files in the `/web` folder.
+### Manual Install
+
+Go into your ComfyUI `custom_nodes` folder folder, open a terminal and do:
+```
+git clone https://github.com/otacoo/ComfyUI-otacoo.git
+```
 
 
 ### Support:
@@ -13,13 +16,3 @@ For now, you can just browse to the web folder and open imginfo.html normally or
 
 ![Screenshot-SD-Metadata-Extractor](https://github.com/user-attachments/assets/d38f19d4-ce05-446c-95f4-f1dbfd448173)
 
-### TODO:
-- Better ComfyUI integration
-- Better parsing of ComfyUI info
-
-### Manual Install
-
-Go into your ComfyUI custom_node folder folder and do:
-```
-git clone https://github.com/otacoo/ComfyUI-otacoo.git
-```
