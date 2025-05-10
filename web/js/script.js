@@ -1036,35 +1036,29 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         }
         return;
     }
+    // Define keys to check for prompt text
+    const promptKeys = ['text', 'tags', 'string', 'prompt'];
+    // Define keys for explicit positive/negative prompts
+    const positiveKeys = ['positive', 'positive_prompt'];
+    const negativeKeys = ['negative', 'negative_prompt'];
+    // Negative keyword regex
+    const negativeRegex = /low quality|lowres|watermark|jpeg artifacts|worst quality/i;
+
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
-        // Handle text key with negative detection
-        if (key === 'text' && typeof obj[key] === 'string') {
-            const val = obj[key];
-            if (/low quality|lowres|watermark|jpeg artifacts|worst quality/i.test(val)) {
-                negativeArr.push(val);
+        const value = obj[key];
+        if (promptKeys.includes(key) && typeof value === 'string') {
+            if (negativeRegex.test(value)) {
+                negativeArr.push(value);
             } else {
-                positiveArr.push(val);
+                positiveArr.push(value);
             }
-            // Handle tags key (always positive)
-        } else if (key === 'tags' && typeof obj[key] === 'string') {
-            positiveArr.push(obj[key]);
-            // Handle explicit positive key
-        } else if ((key === 'positive' || key === 'positive_prompt') && typeof obj[key] === 'string') {
-            positiveArr.push(obj[key]);
-            // Handle explicit negative key
-        } else if ((key === 'negative' || key === 'negative_prompt') && typeof obj[key] === 'string') {
-            negativeArr.push(obj[key]);
-            // Handle generic prompt key (always positive unless contains negative keywords)
-        } else if (key === 'prompt' && typeof obj[key] === 'string') {
-            const val = obj[key];
-            if (/low quality|lowres|watermark|jpeg artifacts|worst quality/i.test(val)) {
-                negativeArr.push(val);
-            } else {
-                positiveArr.push(val);
-            }
-        } else if (typeof obj[key] === 'object') {
-            collectTextValuesWithNegatives(obj[key], positiveArr, negativeArr);
+        } else if (positiveKeys.includes(key) && typeof value === 'string') {
+            positiveArr.push(value);
+        } else if (negativeKeys.includes(key) && typeof value === 'string') {
+            negativeArr.push(value);
+        } else if (typeof value === 'object') {
+            collectTextValuesWithNegatives(value, positiveArr, negativeArr);
         }
     }
 }
