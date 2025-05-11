@@ -1,13 +1,13 @@
 //v1.0.1
 import { app } from "../../scripts/app.js";
 
-app.registerExtension({ 
-	name: "otacoo-imgextract.widget",
-})
-
 const config = {
     newTab: true,
 };
+
+// Store references to created elements for cleanup
+let widgetElements = [];
+let observers = [];
 
 const createWidget = ({ className, text, tooltip, includeIcon, labelIcon }) => {
     const button = document.createElement('button');
@@ -30,11 +30,12 @@ const createWidget = ({ className, text, tooltip, includeIcon, labelIcon }) => {
     button.appendChild(textNode);
 
     button.addEventListener('click', onClick);
+    widgetElements.push(button); // Store reference for cleanup
     return button;
 };
 
 const onClick = () => {
-    const imgExtractUrl = `${window.location.origin}/imgextract`;
+    const imgExtractUrl = `${window.location.origin}/imginfo`;
     if (config.newTab) {
         window.open(imgExtractUrl, '_blank');
     } else {
@@ -87,6 +88,7 @@ const addWidget = (selector, callback) => {
         }
     });
 
+    observers.push(observer); // Store reference for cleanup
     observer.observe(document.body, { childList: true, subtree: true });
 };
 
@@ -99,4 +101,34 @@ const getExtractorIcon = () => {
     return `✨`;
 };
 
-initializeWidget();
+const cleanupWidgets = () => {
+    // Remove all created buttons
+    widgetElements.forEach(element => {
+        if (element && element.parentNode) {
+            element.parentNode.removeChild(element);
+        }
+    });
+    widgetElements = [];
+    
+    // Disconnect all observers
+    observers.forEach(observer => observer.disconnect());
+    observers = [];
+};
+
+app.registerExtension({ 
+    name: "otacoo-imgextract.widget",
+    
+    // Called when the extension is enabled or disabled
+    setup(enabled) {
+        if (enabled) {
+            initializeWidget();
+        } else {
+            cleanupWidgets();
+        }
+    },
+    
+    // This is needed to ensure the extension can be toggled on/off
+    beforeRegisterNodeDef(nodeType, nodeData, app) {
+        return { nodeType, nodeData };
+    }
+});
