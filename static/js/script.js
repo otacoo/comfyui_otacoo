@@ -63,14 +63,26 @@ function distributePromptData(parsed, comment, sourceTag) {
         const negativeTexts = [];
         collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
 
-        setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n'));
-        setAndResize(negativePrompt, negativeTexts.map(unescapePromptString).join('\n'));
-
         // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
         const wildcardTexts = [];
         collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
         const extraMetadataPrompts = [];
         collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+
+        // Process extraMetadataPrompts to separate positive and negative prompts
+        for (let i = 0; i < extraMetadataPrompts.length; i++) {
+            const prompt = extraMetadataPrompts[i];
+            if (typeof prompt === 'string' && prompt.startsWith('__NEGATIVE__')) {
+                // This is a negative prompt from extraMetadata
+                negativeTexts.push(prompt.substring('__NEGATIVE__'.length));
+                // Remove from extraMetadataPrompts
+                extraMetadataPrompts.splice(i, 1);
+                i--; // Adjust index since we removed an item
+            }
+        }
+
+        setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n'));
+        setAndResize(negativePrompt, negativeTexts.map(unescapePromptString).join('\n'));
 
         const additionalPromptsTextarea = document.getElementById('additional-prompts');
         if (additionalPromptsTextarea) {
@@ -98,7 +110,7 @@ function distributePromptData(parsed, comment, sourceTag) {
         // Walk further for nested model info keys (e.g. modelName/modelVersionName in Civitai arrays/objects)
         walkForModelInfo(parsed, (k, v) => {
             // Only add if not already present (avoid duplicates)
-            // addMetadataItem(k, v, modelInfoList);
+            addMetadataItem(k, v, modelInfoList);
         });
         clearWarning();
         found = true;
@@ -1011,9 +1023,32 @@ function collectExtraMetadataPromptOnly(obj, resultArr) {
     }
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
-        if (key === 'extraMetadata' && typeof obj[key] === 'object' && obj[key] !== null) {
-            if (typeof obj[key].prompt === 'string') {
-                resultArr.push(obj[key].prompt);
+        if (key === 'extraMetadata') {
+            // Handle both string and object formats
+            if (typeof obj[key] === 'string') {
+                try {
+                    // Parse the escaped JSON string
+                    const extraMetaObj = JSON.parse(obj[key]);
+                    if (typeof extraMetaObj.prompt === 'string') {
+                        resultArr.push(extraMetaObj.prompt);
+                    }
+                    // Also check for negativePrompt
+                    if (typeof extraMetaObj.negativePrompt === 'string') {
+                        // Store negative prompts with a special marker
+                        resultArr.push('__NEGATIVE__' + extraMetaObj.negativePrompt);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse extraMetadata string:', e);
+                }
+            } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+                if (typeof obj[key].prompt === 'string') {
+                    resultArr.push(obj[key].prompt);
+                }
+                // Also check for negativePrompt
+                if (typeof obj[key].negativePrompt === 'string') {
+                    // Store negative prompts with a special marker
+                    resultArr.push('__NEGATIVE__' + obj[key].negativePrompt);
+                }
             }
         } else if (typeof obj[key] === 'object') {
             collectExtraMetadataPromptOnly(obj[key], resultArr);
@@ -1073,7 +1108,7 @@ function collectPromptInfo(obj, cbPrompt, cbModel) {
     }
 }
 
-// --- Helper: Collect all "text" values and separate negative ones ---
+// --- Helper: Collect all "text" values and separate negative and positives ---
 function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     if (typeof obj !== 'object' || obj === null) return;
     if (Array.isArray(obj)) {
@@ -1081,18 +1116,26 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         return;
     }
     // Define keys to check for prompt text
-    const promptKeys = ['text', 'tags', 'string', 'prompt'];
+    const promptKeys = ['text', 'text_l', 'tags', 'string', 'prompt'];
     // Define keys for explicit positive/negative prompts
     const positiveKeys = ['positive', 'positive_prompt', 'populated_text'];
     const negativeKeys = ['negative', 'negative_prompt'];
     // Negative keyword regex
     const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality/i;
+    // Positive keyword regex
+    const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic/i;
 
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
         const value = obj[key];
         if (promptKeys.includes(key) && typeof value === 'string') {
-            (negativeRegex.test(value) ? negativeArr : positiveArr).push(value);
+            if (negativeRegex.test(value)) {
+                negativeArr.push(value);
+            } else if (positiveRegex.test(value)) {
+                positiveArr.push(value);
+            } else {
+                positiveArr.push(value);
+            }
         } else if (positiveKeys.includes(key) && typeof value === 'string') {
             positiveArr.push(value);
         } else if (negativeKeys.includes(key) && typeof value === 'string') {
