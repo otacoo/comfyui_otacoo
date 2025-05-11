@@ -1,11 +1,10 @@
 //v1.0.1
 import { app } from "../../scripts/app.js";
 
-const extension = {
-    name: "otacoo-imgextract.widget",
-};
+app.registerExtension({ 
+	name: "otacoo-imgextract.widget",
+})
 
-app.registerExtension(extension);
 const config = {
     newTab: true,
 };
@@ -35,11 +34,11 @@ const createWidget = ({ className, text, tooltip, includeIcon, labelIcon }) => {
 };
 
 const onClick = () => {
-    const imgInfoUrl = `${window.location.origin}/imgextract`;
+    const imgExtractUrl = `${window.location.origin}/imgextract`;
     if (config.newTab) {
-        window.open(imgInfoUrl, '_blank');
+        window.open(imgExtractUrl, '_blank');
     } else {
-        window.location.href = imgInfoUrl;
+        window.location.href = imgExtractUrl;
     }
 };
 
@@ -91,7 +90,7 @@ const addWidget = (selector, callback) => {
     observer.observe(document.body, { childList: true, subtree: true });
 };
 
-const initializeWidgets = () => {
+const initializeWidget = () => {
     addWidget('.comfyui-menu-right', addWidgetMenuRight);
     addWidget('.comfy-menu', addWidgetMenu);
 };
@@ -100,4 +99,4 @@ const getExtractorIcon = () => {
     return `✨`;
 };
 
-initializeWidgets();
+initializeWidget();
