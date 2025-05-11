@@ -432,6 +432,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleRow = document.getElementById('additional-info-toggle-row');
     const fileInput = document.getElementById('image-input');
     const stripMetadataBtn = document.getElementById('strip-metadata-btn');
+    const themeToggle = document.getElementById('theme-toggle');
+    const sunIcon = document.querySelector('.sun-icon');
+    const moonIcon = document.querySelector('.moon-icon');
+
+    // --- Theme toggle functionality ---
+    if (themeToggle) {
+        // Check for saved theme preference or use default
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'light') {
+            document.body.classList.add('light-mode');
+            if (sunIcon) sunIcon.style.display = 'none';
+            if (moonIcon) moonIcon.style.display = 'block';
+        }
+
+        // Toggle theme when button is clicked
+        themeToggle.addEventListener('click', function () {
+            document.body.classList.toggle('light-mode');
+
+            // Toggle icons
+            if (document.body.classList.contains('light-mode')) {
+                if (sunIcon) sunIcon.style.display = 'none';
+                if (moonIcon) moonIcon.style.display = 'block';
+                localStorage.setItem('theme', 'light');
+            } else {
+                if (sunIcon) sunIcon.style.display = 'block';
+                if (moonIcon) moonIcon.style.display = 'none';
+                localStorage.setItem('theme', 'dark');
+            }
+        });
+    }
 
     let expanded = false;
 
@@ -446,10 +476,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Helper: Set expanded/collapsed state for additional info ---
     function setExpanded(state) {
         expanded = !!state;
-        additionalContainer.classList.toggle('expanded', expanded);
-        additionalContainer.classList.toggle('collapsed', !expanded);
-        toggleText.textContent = expanded ? 'Hide additional info' : 'Show additional info';
-        toggleText.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        if (additionalContainer) {
+            additionalContainer.classList.toggle('expanded', expanded);
+            additionalContainer.classList.toggle('collapsed', !expanded);
+        }
+        if (toggleText) {
+            toggleText.textContent = expanded ? 'Hide additional info' : 'Show additional info';
+            toggleText.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        }
         chevrons.forEach(chev => chev.classList.toggle('rotate', expanded));
     }
 
@@ -478,12 +512,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 setExpanded(!expanded);
             }
         });
-        toggleText.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-                setExpanded(!expanded);
-                e.preventDefault();
-            }
-        });
+        if (toggleText) {
+            toggleText.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    setExpanded(!expanded);
+                    e.preventDefault();
+                }
+            });
+        }
     }
 
     // --- Hide both toggle row and strip metadata button on file input change ---
