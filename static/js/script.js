@@ -835,6 +835,13 @@ function extractUserCommentFromJPEG(file) {
             let jsonStr = stripPromptPrefix(comment.trim());
             let parsed = safeJsonParse(jsonStr);
             distributePromptData(parsed, comment, sourceTag);
+            
+            // Auto-expand the additional info section for JPEGs with metadata
+            if (typeof window.showExpandedInfo === 'function') {
+                window.showExpandedInfo();
+            } else if (typeof setExpanded === 'function') {
+                setExpanded(true);
+            }
         } else {
             showWarning('❌ No metadata found');
             window.setPromptInfoAvailable(false);
