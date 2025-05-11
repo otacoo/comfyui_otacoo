@@ -2,8 +2,8 @@ import os
 from aiohttp import web
 from server import PromptServer  # type: ignore
 
-class imgInfo:
-    """Main entry point for imgInfo plugin"""
+class imgExtractor:
+    """Main entry point for imgExtractor plugin"""
 
     @classmethod
     def add_routes(cls):
@@ -17,15 +17,15 @@ class imgInfo:
         # Serve static files
         app.router.add_static('/comfyui_otacoo/static', static_dir)
 
-        # Serve imginfo.html at /imginfo
-        async def serve_imginfo(request):
-            return web.FileResponse(os.path.join(static_dir, "imginfo.html"))
+        # Serve imgextract.html at /imgextract
+        async def serve_imgextract(request):
+            return web.FileResponse(os.path.join(static_dir, "imgextract.html"))
 
-        app.router.add_routes([web.get('/imginfo', serve_imginfo)])
+        app.router.add_routes([web.get('/imgextract', serve_imgextract)])
 
 NODE_CLASS_MAPPINGS = {}
 WEB_DIRECTORY = "./js"
 
 # Register routes on import
-imgInfo.add_routes()
+imgExtractor.add_routes()
 __all__ = ["NODE_CLASS_MAPPINGS", "WEB_DIRECTORY"]

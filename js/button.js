@@ -2,7 +2,7 @@
 import { app } from "../../scripts/app.js";
 
 const extension = {
-    name: "otacoo-imginfo.widget",
+    name: "otacoo-imgextract.widget",
 };
 
 app.registerExtension(extension);
@@ -35,7 +35,7 @@ const createWidget = ({ className, text, tooltip, includeIcon, labelIcon }) => {
 };
 
 const onClick = () => {
-    const imgInfoUrl = `${window.location.origin}/imginfo`;
+    const imgInfoUrl = `${window.location.origin}/imgextract`;
     if (config.newTab) {
         window.open(imgInfoUrl, '_blank');
     } else {
@@ -55,7 +55,7 @@ const addWidgetMenuRight = (menuRight) => {
     const imageinfoButton = createWidget({
         className: 'comfyui-button comfyui-menu-mobile-collapse primary',
         text: '',
-        tooltip: 'Launch SD Metadata Extractor',
+        tooltip: 'Launch Metadata Extractor',
         includeIcon: true,
         labelIcon: getExtractorIcon(),
     });
@@ -72,7 +72,7 @@ const addWidgetMenu = (menu) => {
     const imageinfoButton = createWidget({
         className: 'comfy-imginfo-button',
         text: 'Image Info',
-        tooltip: 'Launch SD Metadata Extractor',
+        tooltip: 'Launch Metadata Extractor',
         includeIcon: false,
     });
 

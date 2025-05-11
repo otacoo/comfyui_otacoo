@@ -1,3 +1,4 @@
+//v1.0.1
 /**
  * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
  * (c) otacoo / otakudude / doublerunes, GPLv3
