@@ -35,7 +35,7 @@ const createWidget = ({ className, text, tooltip, includeIcon, labelIcon }) => {
 };
 
 const onClick = () => {
-    const imgExtractUrl = `${window.location.origin}/imginfo`;
+    const imgExtractUrl = `${window.location.origin}/imgextract`;
     if (config.newTab) {
         window.open(imgExtractUrl, '_blank');
     } else {
