@@ -1,0 +1,14 @@
+[project]
+name = "otacoo"
+description = "Extract generation info from PNG and JPEG images, supports both A1111 and (some) ComfyUI metadata"
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/otacoo/comfyui_otacoo"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "comfyui_otacoo"
+Icon = ""
