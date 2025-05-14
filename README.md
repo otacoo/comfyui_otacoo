@@ -14,7 +14,7 @@ Can be used as [standalone](https://github.com/otacoo/comfyui_otacoo/releases/la
 
 ### Manual Install
 
-Go into your ComfyUI `custom_nodes` folder folder, open a terminal and do:
+Go into your ComfyUI `custom_nodes` folder, open a terminal and do:
 ```
 git clone https://github.com/otacoo/comfyui_otacoo.git
 ```
