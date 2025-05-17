@@ -1160,7 +1160,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         return;
     }
     // Define keys to check for prompt text
-    const promptKeys = ['text', 'text_l', 'tags', 'string', 'prompt'];
+    const promptKeys = ['text', 'text_l', 'tags', 'string', 'string_field', 'prompt'];
     // Define keys for explicit positive/negative prompts
     const positiveKeys = ['positive', 'positive_prompt', 'populated_text'];
     const negativeKeys = ['negative', 'negative_prompt'];
