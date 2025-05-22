@@ -1163,7 +1163,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
     const promptKeys = ['text', 'text_l', 'tags', 'string', 'string_field', 'prompt'];
     // Negative/positive regex
     const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality|bad quality/i;
-    const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic/i;
+    const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic|1girl/i;
 
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
