@@ -771,7 +771,7 @@ function extractExifMetadata(file) {
                     return;
                 }
                 if (view.getUint16(offset, false) === 0xFFE1) {
-                    addMetadataItem('EXIF', 'EXIF segment found');
+                    addMetadataItem('EXIF', 'EXIF segment found but no metadata');
                     return;
                 }
                 offset += 2;
@@ -821,7 +821,7 @@ function safeJsonParse(str) {
                     if (typeof result === 'object' && result !== null) {
                         console.warn('Used Function constructor as fallback for JSON parsing');
                         return result;
-                }
+                    }
                 }
             } catch (err3) {
                 // Cut my life into pieces, this is my last resort
@@ -835,10 +835,12 @@ function safeJsonParse(str) {
 // Replace double-backslash n with real newline
 function unescapePromptString(str) {
     if (typeof str !== 'string') return '';
-    return str.replace(/\\\\n/g, "\n")
-        .replace(/\\\\/g, "\\"); // Unescape any remaining double backslashes
+    // Replace double-backslash n (\\n) and single-backslash n (\n) with real newline
+    return str
+        .replace(/\\\\n/g, "\n")   // double-backslash n
+        .replace(/\\n/g, "\n")     // single-backslash n
+        .replace(/\\\\/g, "\\");   // unescape any remaining double backslashes
 }
-
 // --- JPEG and WEBP metadata extraction with prompt distribution ---
 function extractUserCommentFromJPEG(file) {
     getExifData(file, function (exifData) {
@@ -871,7 +873,7 @@ function extractUserCommentFromJPEG(file) {
             let jsonStr = stripPromptPrefix(comment.trim());
             let parsed = safeJsonParse(jsonStr);
             distributePromptData(parsed, comment, sourceTag);
-            
+
             // Auto-expand the additional info section for JPEGs with metadata
             if (typeof window.showExpandedInfo === 'function') {
                 window.showExpandedInfo();
@@ -1230,8 +1232,10 @@ function extractJsonValue(str, startIdx) {
  * - Enhanced: Recursively extract model info keys from JSON-like values in additional info.
  */
 function parseAndDisplayUserComment(comment) {
+    window.setPromptInfoAvailable(true);
     // Remove "UNICODE" at the start if present
     comment = comment.trim();
+    comment = unescapePromptString(comment);
     if (comment.startsWith('UNICODE')) {
         comment = comment.substring('UNICODE'.length).trim();
     }
