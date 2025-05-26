@@ -771,7 +771,7 @@ function extractExifMetadata(file) {
                     return;
                 }
                 if (view.getUint16(offset, false) === 0xFFE1) {
-                    addMetadataItem('EXIF', 'EXIF segment found but no metadata');
+                    addMetadataItem('EXIF', 'EXIF segment');
                     return;
                 }
                 offset += 2;
