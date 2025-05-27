@@ -952,6 +952,12 @@ function extractPngMetadata(file) {
                                 let parsed = safeJsonParse(promptText);
                                 distributePromptData(parsed, promptText, keyword);
                                 found = true;
+                                // --- Auto-expand the additional info section for PNGs with metadata
+                                if (typeof window.showExpandedInfo === 'function') {
+                                    window.showExpandedInfo();
+                                } else if (typeof setExpanded === 'function') {
+                                    setExpanded(true);
+                                }
                             }
                         }
                     }
@@ -1009,6 +1015,12 @@ function extractPngMetadata(file) {
                     let parsed = safeJsonParse(jsonStr);
                     distributePromptData(parsed, comment, sourceTag);
                     found = true;
+                    // --- Auto-expand the additional info section for PNGs with metadata
+                    if (typeof window.showExpandedInfo === 'function') {
+                        window.showExpandedInfo();
+                    } else if (typeof setExpanded === 'function') {
+                        setExpanded(true);
+                    }
                 }
             }
             if (!found) {
@@ -1162,10 +1174,10 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         return;
     }
     // Define keys to check for prompt text (case-insensitive, ignore trailing colon/whitespace)
-    const promptKeys = ['text', 'text_l', 'tags', 'string', 'string_field', 'prompt'];
+    const promptKeys = ['text', 'text_l', 'tags', 'string', 'string_field', 'prompt', 'populated_text'];
     // Negative/positive regex
     const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality|bad quality/i;
-    const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic|1girl/i;
+    const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic|1girl|2girls|3girls/i;
 
     for (const key in obj) {
         if (!obj.hasOwnProperty(key)) continue;
