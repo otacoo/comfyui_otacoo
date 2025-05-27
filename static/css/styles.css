@@ -52,7 +52,6 @@ body {
 .container,
 .prompt-container,
 .additional-container {
-    max-height: 89vh;
     overflow-y: auto;
     scrollbar-width: thin;
 }
