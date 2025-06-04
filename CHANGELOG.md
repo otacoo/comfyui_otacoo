@@ -1,3 +1,9 @@
+## v1.0.2
+*2025-06-04*
+
+- Improved parsing for more edge cases
+- Slight changes to menu
+
 ## v1.0.1
 *2025-05-09*
 
