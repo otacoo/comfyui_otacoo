@@ -1,3 +1,9 @@
+## v1.0.3
+*2025-07-28*
+
+- Add NovelAI v4/v5 metadata support
+- Improved parsing for certain ComfyUI metadata
+
 ## v1.0.2
 *2025-06-04*
 

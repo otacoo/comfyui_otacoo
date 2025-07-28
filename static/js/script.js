@@ -1,4 +1,4 @@
-//v1.0.2
+//v1.0.3
 /**
  * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
  * (c) otacoo / otakudude / doublerunes, GPLv3
@@ -59,62 +59,116 @@ function isModelInfoKey(key, value) {
 function distributePromptData(parsed, comment, sourceTag) {
     let found = false;
     if (parsed && typeof parsed === 'object') {
-        // 1. Collect all "text" values (recursively) for positive and negative prompts
-        const positiveTexts = [];
-        const negativeTexts = [];
-        collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
-
-        // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
-        const wildcardTexts = [];
-        collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
-        const extraMetadataPrompts = [];
-        collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
-
-        // Process extraMetadataPrompts to separate positive and negative prompts
-        for (let i = 0; i < extraMetadataPrompts.length; i++) {
-            const prompt = extraMetadataPrompts[i];
-            if (typeof prompt === 'string' && prompt.startsWith('__NEGATIVE__')) {
-                // This is a negative prompt from extraMetadata
-                negativeTexts.push(prompt.substring('__NEGATIVE__'.length));
-                // Remove from extraMetadataPrompts
-                extraMetadataPrompts.splice(i, 1);
-                i--; // Adjust index since we removed an item
+        // --- NovelAI v4/v5 JSON Handler ---
+        if (parsed.hasOwnProperty('signed_hash') && parsed.hasOwnProperty('sampler')) {
+            const positiveTexts = [];
+            if (parsed.prompt && typeof parsed.prompt === 'string') {
+                positiveTexts.push(parsed.prompt);
             }
-        }
+            if (parsed.v4_prompt && parsed.v4_prompt.caption && Array.isArray(parsed.v4_prompt.caption.char_captions)) {
+                parsed.v4_prompt.caption.char_captions.forEach(charCap => {
+                    if (charCap.char_caption && charCap.char_caption.trim()) {
+                        positiveTexts.push(charCap.char_caption);
+                    }
+                });
+            }
 
-        setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n'));
-        setAndResize(negativePrompt, negativeTexts.map(unescapePromptString).join('\n'));
+            let negativeText = '';
+            if (parsed.uc && typeof parsed.uc === 'string') {
+                negativeText = parsed.uc;
+            } else if (parsed.v4_negative_prompt && parsed.v4_negative_prompt.caption && parsed.v4_negative_prompt.caption.base_caption) {
+                negativeText = parsed.v4_negative_prompt.caption.base_caption;
+            }
 
-        const additionalPromptsTextarea = document.getElementById('additional-prompts');
-        if (additionalPromptsTextarea) {
-            let combined = [...wildcardTexts, ...extraMetadataPrompts];
-            setAndResize(additionalPromptsTextarea, combined.join('\n'));
-        }
+            setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n\n'));
+            setAndResize(negativePrompt, unescapePromptString(negativeText));
 
-        // 3. Collect allowed keys for prompt-info-list and model-info-list
-        if (promptInfoList) promptInfoList.innerHTML = '';
-        if (modelInfoList) modelInfoList.innerHTML = '';
-        // Add all prompt info as before
-        collectPromptInfo(
-            parsed,
-            (key, value) => {
-                if (!isModelInfoKey(key, value)) {
-                    addMetadataItem(key, value, promptInfoList);
+            const additionalPromptsTextarea = document.getElementById('additional-prompts');
+            if (additionalPromptsTextarea) {
+                setAndResize(additionalPromptsTextarea, ''); // Clear as it's handled above
+            }
+
+            if (promptInfoList) promptInfoList.innerHTML = '';
+            if (modelInfoList) modelInfoList.innerHTML = '';
+
+            const infoData = { ...parsed };
+            delete infoData.prompt;
+            delete infoData.uc;
+            delete infoData.v4_prompt;
+            delete infoData.v4_negative_prompt;
+
+            collectPromptInfo(
+                infoData,
+                (key, value) => {
+                    if (!isModelInfoKey(key, value)) { addMetadataItem(key, value, promptInfoList); }
+                },
+                (key, value) => {
+                    if (isModelInfoKey(key, value)) { addMetadataItem(key, value, modelInfoList); }
                 }
-            },
-            (key, value) => {
-                if (isModelInfoKey(key, value)) {
-                    addMetadataItem(key, value, modelInfoList);
+            );
+
+            walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            clearWarning();
+            found = true;
+        } else {
+            // --- Generic JSON Handler ---
+            // 1. Collect all "text" values (recursively) for positive and negative prompts
+            const positiveTexts = [];
+            const negativeTexts = [];
+            collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
+
+            // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
+            const wildcardTexts = [];
+            collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
+            const extraMetadataPrompts = [];
+            collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+
+            // Process extraMetadataPrompts to separate positive and negative prompts
+            for (let i = 0; i < extraMetadataPrompts.length; i++) {
+                const prompt = extraMetadataPrompts[i];
+                if (typeof prompt === 'string' && prompt.startsWith('__NEGATIVE__')) {
+                    // This is a negative prompt from extraMetadata
+                    negativeTexts.push(prompt.substring('__NEGATIVE__'.length));
+                    // Remove from extraMetadataPrompts
+                    extraMetadataPrompts.splice(i, 1);
+                    i--; // Adjust index since we removed an item
                 }
             }
-        );
-        // Walk further for nested model info keys (e.g. modelName/modelVersionName in Civitai arrays/objects)
-        walkForModelInfo(parsed, (k, v) => {
-            // Only add if not already present (avoid duplicates)
-            addMetadataItem(k, v, modelInfoList);
-        });
-        clearWarning();
-        found = true;
+
+            setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n'));
+            setAndResize(negativePrompt, negativeTexts.map(unescapePromptString).join('\n'));
+
+            const additionalPromptsTextarea = document.getElementById('additional-prompts');
+            if (additionalPromptsTextarea) {
+                let combined = [...wildcardTexts, ...extraMetadataPrompts];
+                setAndResize(additionalPromptsTextarea, combined.join('\n'));
+            }
+
+            // 3. Collect allowed keys for prompt-info-list and model-info-list
+            if (promptInfoList) promptInfoList.innerHTML = '';
+            if (modelInfoList) modelInfoList.innerHTML = '';
+            // Add all prompt info as before
+            collectPromptInfo(
+                parsed,
+                (key, value) => {
+                    if (!isModelInfoKey(key, value)) {
+                        addMetadataItem(key, value, promptInfoList);
+                    }
+                },
+                (key, value) => {
+                    if (isModelInfoKey(key, value)) {
+                        addMetadataItem(key, value, modelInfoList);
+                    }
+                }
+            );
+            // Walk further for nested model info keys (e.g. modelName/modelVersionName in Civitai arrays/objects)
+            walkForModelInfo(parsed, (k, v) => {
+                // Only add if not already present (avoid duplicates)
+                addMetadataItem(k, v, modelInfoList);
+            });
+            clearWarning();
+            found = true;
+        }
     }
     if (!found && comment && comment.trim()) {
         clearWarning();
@@ -945,11 +999,21 @@ function extractPngMetadata(file) {
                             const keyword = raw.substring(0, sepIdx);
                             const text = raw.substring(sepIdx + 1);
                             console.log('PNG chunk:', chunkType, 'keyword:', keyword);
-                            if (["prompt", "parameters", "usercomment"].includes(keyword.toLowerCase())) {
+                            if (["prompt", "parameters", "usercomment", "comment", "description", "result"].includes(keyword.toLowerCase())) {
                                 let promptText = text;
                                 console.log('Found PNG metadata with keyword:', keyword);
                                 window.setPromptInfoAvailable(true);
-                                let parsed = safeJsonParse(promptText);
+
+                                // Trim leading text before JSON starts if it looks like NovelAI metadata
+                                let textToParse = promptText;
+                                if (promptText.includes('"sampler"') && promptText.includes('"signed_hash"')) {
+                                    const jsonStartIndex = promptText.indexOf('{');
+                                    if (jsonStartIndex > -1) {
+                                        textToParse = promptText.substring(jsonStartIndex);
+                                    }
+                                }
+                                
+                                let parsed = safeJsonParse(textToParse);
                                 distributePromptData(parsed, promptText, keyword);
                                 found = true;
                                 // --- Auto-expand the additional info section for PNGs with metadata
@@ -1174,7 +1238,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         return;
     }
     // Define keys to check for prompt text (case-insensitive, ignore trailing colon/whitespace)
-    const promptKeys = ['text', 'text_l', 'tags', 'string', 'string_field', 'prompt', 'populated_text'];
+    const promptKeys = ['text', 'text_l', 'text_a', 'text_b', 'negative', 'positive', 'result', 'tags', 'string', 'string_field', 'prompt', 'populated_text'];
     // Negative/positive regex
     const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality|bad quality/i;
     const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic|1girl|2girls|3girls/i;
