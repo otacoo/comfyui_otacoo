@@ -1,0 +1,23 @@
+{
+  "name": "sd-metadata-extractor",
+  "version": "1.0.4",
+  "description": "Metadata extractor for AI-generated images (Stable Diffusion, NovelAI, ComfyUI, etc.)",
+  "main": "index.js",
+  "scripts": {
+    "version": "node update-version.js && git add -A",
+    "postversion": "git push && git push --tags"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/otacoo/comfyui_otacoo.git"
+  },
+  "keywords": [
+    "metadata",
+    "stable-diffusion",
+    "novelai",
+    "comfyui",
+    "image-metadata"
+  ],
+  "author": "otacoo",
+  "license": "GPL-3.0"
+}

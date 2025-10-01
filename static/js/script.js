@@ -1,4 +1,4 @@
-//v1.0.3
+//v1.0.4
 /**
  * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
  * (c) otacoo / otakudude / doublerunes, GPLv3
@@ -979,6 +979,99 @@ function extractUserCommentFromWebp(file) {
     });
 }
 
+// --- NovelAI Alpha Channel Metadata Extraction ---
+function extractNovelAIAlphaMetadata(file, callback) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pixels = imageData.data;
+                
+                // Extract LSB from alpha channel
+                let binaryString = '';
+                for (let i = 3; i < pixels.length; i += 4) {
+                    // Get the least significant bit of the alpha channel
+                    binaryString += (pixels[i] & 1).toString();
+                }
+                
+                // Convert binary string to text
+                const metadata = binaryStringToText(binaryString);
+                
+                if (metadata) {
+                    console.log('NovelAI alpha channel metadata found:', metadata);
+                    callback(metadata);
+                } else {
+                    callback(null);
+                }
+            } catch (err) {
+                console.error('Error extracting NovelAI alpha metadata:', err);
+                callback(null);
+            }
+        };
+        img.onerror = function() {
+            console.error('Failed to load image for alpha channel extraction');
+            callback(null);
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+/**
+ * Convert binary string to text, stopping at null terminator or invalid data
+ */
+function binaryStringToText(binaryString) {
+    let text = '';
+    let foundStart = false;
+    
+    // Process in 8-bit chunks
+    for (let i = 0; i < binaryString.length - 7; i += 8) {
+        const byte = binaryString.substr(i, 8);
+        const charCode = parseInt(byte, 2);
+        
+        // Stop at null terminator
+        if (charCode === 0) {
+            if (foundStart) break;
+            continue;
+        }
+        
+        // Look for JSON start
+        if (charCode === 123) { // '{'
+            foundStart = true;
+        }
+        
+        if (foundStart) {
+            text += String.fromCharCode(charCode);
+        }
+        
+        // Stop if we've found a complete JSON object
+        if (foundStart && charCode === 125) { // '}'
+            // Try to parse to see if it's valid
+            try {
+                JSON.parse(text);
+                break; // Valid JSON found, stop here
+            } catch (e) {
+                // Continue, might be nested JSON
+            }
+        }
+    }
+    
+    // Validate that we have JSON-like content
+    if (text.trim().startsWith('{') && text.includes('"')) {
+        return text.trim();
+    }
+    
+    return null;
+}
+
 // --- PNG metadata extraction with prompt distribution ---
 function extractPngMetadata(file) {
     const reader = new FileReader();
@@ -1087,10 +1180,28 @@ function extractPngMetadata(file) {
                     }
                 }
             }
+            // 3. If still not found, try NovelAI alpha channel extraction
             if (!found) {
-                console.warn('No prompt metadata found in PNG');
-                window.setPromptInfoAvailable(false);
-                showWarning('❌ No prompt metadata found');
+                console.log('PNG: No metadata in text/EXIF chunks, trying NovelAI alpha channel extraction');
+                extractNovelAIAlphaMetadata(file, function(alphaMetadata) {
+                    if (alphaMetadata) {
+                        console.log('NovelAI alpha metadata extracted:', alphaMetadata);
+                        window.setPromptInfoAvailable(true);
+                        let parsed = safeJsonParse(alphaMetadata);
+                        distributePromptData(parsed, alphaMetadata, 'NovelAI Alpha Channel');
+                        // Auto-expand the additional info section
+                        if (typeof window.showExpandedInfo === 'function') {
+                            window.showExpandedInfo();
+                        } else if (typeof setExpanded === 'function') {
+                            setExpanded(true);
+                        }
+                    } else {
+                        console.warn('No prompt metadata found in PNG (including alpha channel)');
+                        window.setPromptInfoAvailable(false);
+                        showWarning('❌ No prompt metadata found');
+                    }
+                });
+                return; // Exit early since alpha extraction is async
             }
         } catch (err) {
             console.error('Failed to parse PNG metadata:', err);
