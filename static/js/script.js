@@ -181,6 +181,7 @@ function distributePromptData(parsed, comment, sourceTag) {
                     if (isModelInfoKey(key, value)) addMetadataItem(key, value, modelInfoList);
                 });
                 walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
+                setGenerationMetadataType('CivitAI');
                 clearWarning();
                 found = true;
             }
@@ -205,6 +206,7 @@ function distributePromptData(parsed, comment, sourceTag) {
                     if (isModelInfoKey(key, value)) addMetadataItem(key, value, modelInfoList);
                 });
                 walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
+                setGenerationMetadataType('ComfyUI');
                 clearWarning();
                 found = true;
             }
@@ -258,6 +260,7 @@ function distributePromptData(parsed, comment, sourceTag) {
             );
 
             walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            setGenerationMetadataType('NovelAI');
             clearWarning();
             found = true;
         } else if (parsed.generation_mode !== undefined && (parsed.positive_prompt !== undefined || parsed.negative_prompt !== undefined || parsed.value !== undefined || parsed.Value !== undefined)) {
@@ -301,6 +304,7 @@ function distributePromptData(parsed, comment, sourceTag) {
             );
 
             walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            setGenerationMetadataType('InvokeAI');
             clearWarning();
             found = true;
         } else {
@@ -359,12 +363,14 @@ function distributePromptData(parsed, comment, sourceTag) {
                 // Only add if not already present (avoid duplicates)
                 addMetadataItem(k, v, modelInfoList);
             });
+            setGenerationMetadataType('Generic');
             clearWarning();
             found = true;
         }
     }
     if (!found && comment && comment.trim()) {
         clearWarning();
+        setGenerationMetadataType('A1111');
         parseAndDisplayUserComment(comment);
     } else if (!found) {
         showWarning('❌ No metadata found');
@@ -1016,11 +1022,11 @@ function extractExifMetadata(file) {
             const length = view.byteLength;
             while (offset < length) {
                 if (view.getUint16(offset + 2, false) === 0x4578) {
-                    addMetadataItem('EXIF', 'EXIF data present');
+                    addMetadataItem('EXIF', 'EXIF data present (no generation metadata)');
                     return;
                 }
                 if (view.getUint16(offset, false) === 0xFFE1) {
-                    addMetadataItem('EXIF', 'EXIF segment found');
+                    addMetadataItem('EXIF', 'EXIF segment found (no generation metadata)');
                     return;
                 }
                 offset += 2;
@@ -1028,7 +1034,7 @@ function extractExifMetadata(file) {
             addMetadataItem('EXIF', 'No EXIF data found');
         } else if (file.type === 'image/webp') {
             // WebP EXIF is rare, just note presence
-            addMetadataItem('EXIF', 'EXIF metadata found');
+            addMetadataItem('EXIF', 'EXIF metadata found (no generation metadata)');
         }
     };
     reader.readAsArrayBuffer(file);
@@ -1809,6 +1815,22 @@ function addMetadataItem(label, value, listElement) {
         li.textContent = value;
     }
     (listElement || metadataList).appendChild(li);
+}
+
+/**
+ * Show the detected generation metadata type in Image Info
+ */
+function setGenerationMetadataType(type) {
+    if (!metadataList || !type) return;
+    const noGen = ' (no generation metadata)';
+    const items = metadataList.querySelectorAll('li');
+    for (let i = 0; i < items.length; i++) {
+        const li = items[i];
+        if (li.innerHTML && li.innerHTML.indexOf(noGen) !== -1) {
+            li.innerHTML = li.innerHTML.replace(noGen, '');
+        }
+    }
+    addMetadataItem('Metadata type', type);
 }
 
 // --- UI clearing ---
