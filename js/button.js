@@ -1,134 +1,75 @@
-//v1.0.4
 import { app } from "../../scripts/app.js";
+
+const BUTTON_TOOLTIP = "Launch Metadata Extractor";
+const IMGEXTRACT_PATH = "/imgextract";
+const NEW_WINDOW_FEATURES = "width=1200,height=800,resizable=yes,scrollbars=yes,status=yes";
 
 const config = {
     newTab: true,
 };
 
-// Store references to created elements for cleanup
-let widgetElements = [];
-let observers = [];
+const onClick = (event) => {
+    const url = `${window.location.origin}${IMGEXTRACT_PATH}`;
 
-const createWidget = ({ className, text, tooltip, includeIcon, labelIcon }) => {
-    const button = document.createElement('button');
-    button.className = className;
-    button.setAttribute('aria-label', tooltip);
-    button.title = tooltip;
-
-    if (includeIcon && labelIcon) {
-        const iconContainer = document.createElement('span');
-        iconContainer.innerHTML = labelIcon;
-        iconContainer.style.display = 'flex';
-        iconContainer.style.alignItems = 'center';
-        iconContainer.style.justifyContent = 'center';
-        iconContainer.style.width = '20px';
-        iconContainer.style.height = '16px';
-        button.appendChild(iconContainer);
-    }
-
-    const textNode = document.createTextNode(text);
-    button.appendChild(textNode);
-
-    button.addEventListener('click', onClick);
-    widgetElements.push(button); // Store reference for cleanup
-    return button;
-};
-
-const onClick = () => {
-    const imgExtractUrl = `${window.location.origin}/imgextract`;
-    if (config.newTab) {
-        window.open(imgExtractUrl, '_blank');
-    } else {
-        window.location.href = imgExtractUrl;
-    }
-};
-
-const addWidgetMenuRight = (menuRight) => {
-    let buttonGroup = menuRight.querySelector('.comfyui-button-group');
-
-    if (!buttonGroup) {
-        buttonGroup = document.createElement('div');
-        buttonGroup.className = 'comfyui-button-group';
-        menuRight.appendChild(buttonGroup);
-    }
-
-    const imageinfoButton = createWidget({
-        className: 'comfyui-button comfyui-menu-mobile-collapse primary',
-        text: '',
-        tooltip: 'Launch Metadata Extractor',
-        includeIcon: true,
-        labelIcon: getExtractorIcon(),
-    });
-
-    buttonGroup.appendChild(imageinfoButton);
-};
-
-const addWidgetMenu = (menu) => {
-    const resetViewButton = menu.querySelector('#comfy-reset-view-button');
-    if (!resetViewButton) {
+    if (event.shiftKey) {
+        window.open(url, "_blank", NEW_WINDOW_FEATURES);
         return;
     }
 
-    const imageinfoButton = createWidget({
-        className: 'comfy-imginfo-button',
-        text: 'Image Info',
-        tooltip: 'Launch Metadata Extractor',
-        includeIcon: false,
-    });
-
-    resetViewButton.insertAdjacentElement('afterend', imageinfoButton);
-};
-
-const addWidget = (selector, callback) => {
-    const observer = new MutationObserver((mutations, obs) => {
-        const element = document.querySelector(selector);
-        if (element) {
-            callback(element);
-            obs.disconnect();
-        }
-    });
-
-    observers.push(observer); // Store reference for cleanup
-    observer.observe(document.body, { childList: true, subtree: true });
-};
-
-const initializeWidget = () => {
-    addWidget('.comfyui-menu-right', addWidgetMenuRight);
-    addWidget('.comfy-menu', addWidgetMenu);
+    if (config.newTab) {
+        window.open(url, "_blank");
+    } else {
+        window.location.href = url;
+    }
 };
 
 const getExtractorIcon = () => {
     return `✨`;
 };
 
-const cleanupWidgets = () => {
-    // Remove all created buttons
-    widgetElements.forEach(element => {
-        if (element && element.parentNode) {
-            element.parentNode.removeChild(element);
+const injectStyles = () => {
+    const styleId = "otacoo-imgextract-button-styles";
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+        button[aria-label="${BUTTON_TOOLTIP}"].otacoo-imgextract-toolbar-btn {
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
         }
-    });
-    widgetElements = [];
-    
-    // Disconnect all observers
-    observers.forEach(observer => observer.disconnect());
-    observers = [];
+        button[aria-label="${BUTTON_TOOLTIP}"].otacoo-imgextract-toolbar-btn:hover {
+            background-color: var(--primary-hover-bg) !important;
+        }
+    `;
+    document.head.appendChild(style);
 };
 
-app.registerExtension({ 
-    name: "otacoo-imgextract.widget",
-    
-    // Called when the extension is enabled or disabled
-    setup(enabled) {
-        if (enabled) {
-            initializeWidget();
-        } else {
-            cleanupWidgets();
-        }
-    },
-    
-    // This is needed to ensure the extension can be toggled on/off
-    beforeRegisterNodeDef(nodeType, nodeData, app) {
-        return { nodeType, nodeData };
+const replaceButtonIcon = () => {
+    const buttons = document.querySelectorAll(`button[aria-label="${BUTTON_TOOLTIP}"]`);
+    buttons.forEach((button) => {
+        button.classList.add("otacoo-imgextract-toolbar-btn");
+        button.innerHTML = getExtractorIcon();
+        button.style.borderRadius = "4px";
+        button.style.padding = "6px";
+        button.style.backgroundColor = "var(--primary-bg)";
+    });
+    if (buttons.length === 0) {
+        requestAnimationFrame(replaceButtonIcon);
     }
+};
+
+app.registerExtension({
+    name: "otacoo-imgextract.widget",
+    actionBarButtons: [
+        {
+            icon: "icon-[mdi--image-search] size-4",
+            tooltip: BUTTON_TOOLTIP,
+            onClick,
+        },
+    ],
+    async setup() {
+        injectStyles();
+        requestAnimationFrame(replaceButtonIcon);
+    },
 });
