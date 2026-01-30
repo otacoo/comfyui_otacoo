@@ -88,12 +88,13 @@ function extractComfyUIMetadata(parsed) {
             if (!node || !classTypeRegex.test((node.class_type || '').toLowerCase())) continue;
             const inputs = node.inputs;
             if (!inputs) continue;
-            const val = fields.map(function (f) { return inputs[f]; }).find(function (v) { return typeof v === 'string' || typeof v === 'number'; });
-            if (val == null) continue;
-            const str = String(val).replace(/_/g, ' ');
-            if (excludeNegative && negativeKeywords.test(str)) continue;
-            if (!excludeNegative && !negativeKeywords.test(str)) continue;
-            out.push(typeof val === 'number' ? String(val) : val);
+            const vals = fields.map(function (f) { return inputs[f]; }).filter(function (v) { return typeof v === 'string' || typeof v === 'number'; });
+            vals.forEach(function (val) {
+                const str = String(val).replace(/_/g, ' ');
+                if (excludeNegative && negativeKeywords.test(str)) return;
+                if (!excludeNegative && !negativeKeywords.test(str)) return;
+                out.push(typeof val === 'number' ? String(val) : val);
+            });
         }
         return out;
     }
@@ -130,7 +131,7 @@ function extractComfyUIMetadata(parsed) {
             });
             if (hasClassType) {
                 const re = /cliptextencode|wildcard|textboxmira|eff\. loader|ttn text/i;
-                const posFields = ['text', 'positive', 'wildcard_text', 'clip_l', 't5xxl'];
+                const posFields = ['text', 'positive', 'wildcard_text', 'clip_l', 't5xxl', 'string_a', 'string_b'];
                 const negFields = ['text', 'negative', 'wildcard_text'];
                 const positiveArr = getNodesValues(p, re, posFields, true);
                 const negativeArr = getNodesValues(p, re, negFields, false);
@@ -1623,7 +1624,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         return;
     }
     // Define keys to check for prompt text (case-insensitive, ignore trailing colon/whitespace)
-    const promptKeys = ['text', 'text_l', 'text_a', 'text_b', 'negative', 'positive', 'result', 'tags', 'string', 'string_field', 'prompt', 'populated_text', 'value'];
+    const promptKeys = ['text', 'text_l', 'text_a', 'text_b', 'negative', 'positive', 'result', 'tags', 'string', 'string_field', 'string_a', 'string_b', 'prompt', 'populated_text', 'value'];
     // Negative/positive regex
     const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality|bad quality/i;
     const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic|1girl|2girls|3girls/i;
@@ -1634,8 +1635,8 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         if (typeof value === 'string') {
             // Normalize key: lowercase, remove trailing colon/whitespace
             const normKey = key.trim().replace(/:$/, '').toLowerCase();
-            if (normKey === 'value') {
-                // "value" is treated as positive prompt (e.g. InvokeAI)
+            if (normKey === 'value' || normKey === 'string_a' || normKey === 'string_b') {
+                // "value", "string_a", "string_b" treated as positive prompt (InvokeAI, ComfyUI)
                 positiveArr.push(value);
             } else if (promptKeys.includes(normKey)) {
                 if (negativeRegex.test(value)) {
