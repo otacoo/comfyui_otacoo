@@ -1,3 +1,8 @@
+## v1.1.1
+*2026-01-30*
+
+- Use the new ComfyUI API to add the button back to the toolbar
+
 ## v1.1.0
 *2026-01-30*
 
