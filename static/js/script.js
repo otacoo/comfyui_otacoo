@@ -55,12 +55,161 @@ function isModelInfoKey(key, value) {
     );
 }
 
+// --- CivitAI metadata: parameters chunk with extraMetadata (ComfyUI Civitai format) ---
+function extractCivitAIMetadata(parsed) {
+    try {
+        const em = parsed.extraMetadata;
+        if (em == null) return null;
+        const md = typeof em === 'string' ? safeJsonParse(em) : em;
+        if (!md || typeof md !== 'object') return null;
+        const prompt = md.prompt != null ? String(md.prompt) : '';
+        const negative = md.negativePrompt != null ? String(md.negativePrompt) : '';
+        const extra = [];
+        if (md.steps != null) extra.push('Steps: ' + md.steps);
+        if (md.sampler) extra.push('Sampler: ' + md.sampler);
+        if (md.cfgScale != null) extra.push('CFG scale: ' + md.cfgScale);
+        if (md.seed != null) extra.push('Seed: ' + md.seed);
+        if (md.resources) extra.push('Civitai resources: ' + JSON.stringify(md.resources));
+        return { prompt, negative, extra: extra.join(', ') };
+    } catch (e) {
+        return null;
+    }
+}
+
+// --- ComfyUI: prompt graph (class_type nodes) or generation_data ---
+function extractComfyUIMetadata(parsed) {
+    const negativeKeywords = /bad quality|worst quality|low quality|bad anatomy|lowres/i;
+    function getNodesValues(graph, classTypeRegex, fields, excludeNegative) {
+        if (!graph || typeof graph !== 'object') return [];
+        const out = [];
+        for (const key in graph) {
+            if (!graph.hasOwnProperty(key)) continue;
+            const node = graph[key];
+            if (!node || !classTypeRegex.test((node.class_type || '').toLowerCase())) continue;
+            const inputs = node.inputs;
+            if (!inputs) continue;
+            const val = fields.map(function (f) { return inputs[f]; }).find(function (v) { return typeof v === 'string' || typeof v === 'number'; });
+            if (val == null) continue;
+            const str = String(val).replace(/_/g, ' ');
+            if (excludeNegative && negativeKeywords.test(str)) continue;
+            if (!excludeNegative && !negativeKeywords.test(str)) continue;
+            out.push(typeof val === 'number' ? String(val) : val);
+        }
+        return out;
+    }
+    function getFirst(graph, classTypeRegex, fields) {
+        const arr = getNodesValues(graph, classTypeRegex, fields, true);
+        return arr.length ? arr[0] : undefined;
+    }
+    try {
+        if (parsed.generation_data && typeof parsed.generation_data === 'string') {
+            const s = parsed.generation_data;
+            const end = s.lastIndexOf('}') + 1;
+            const md = end > 0 ? safeJsonParse(s.slice(0, end)) : null;
+            if (md && typeof md === 'object') {
+                const prompt = md.prompt != null ? String(md.prompt) : '';
+                const negative = (md.negativePrompt != null ? String(md.negativePrompt) : '') || (md.negative ? String(md.negative) : '');
+                const extra = [];
+                if (md.steps != null) extra.push('Steps: ' + md.steps);
+                if (md.samplerName) extra.push('Sampler: ' + md.samplerName);
+                if (md.cfgScale != null) extra.push('CFG scale: ' + md.cfgScale);
+                if (md.seed != null) extra.push('Seed: ' + md.seed);
+                if (md.width != null && md.height != null) extra.push('Size: ' + md.width + 'x' + md.height);
+                if (md.baseModel && (md.baseModel.modelFileName || md.baseModel.hash)) {
+                    if (md.baseModel.hash) extra.push('Model hash: ' + md.baseModel.hash);
+                    if (md.baseModel.modelFileName) extra.push('Model: ' + md.baseModel.modelFileName);
+                }
+                return { prompt, negative, extra: extra.join(', ') };
+            }
+        }
+        const p = parsed.prompt;
+        if (p && typeof p === 'object' && !Array.isArray(p)) {
+            const hasClassType = Object.keys(p).some(function (k) {
+                const n = p[k];
+                return n && typeof n === 'object' && n.class_type;
+            });
+            if (hasClassType) {
+                const re = /cliptextencode|wildcard|textboxmira|eff\. loader|ttn text/i;
+                const posFields = ['text', 'positive', 'wildcard_text', 'clip_l', 't5xxl'];
+                const negFields = ['text', 'negative', 'wildcard_text'];
+                const positiveArr = getNodesValues(p, re, posFields, true);
+                const negativeArr = getNodesValues(p, re, negFields, false);
+                const prompt = positiveArr.join('\n');
+                const negative = negativeArr.join('\n');
+                const extra = [];
+                const steps = getFirst(p, /scheduler|sampler/i, ['steps']);
+                const sampler = getFirst(p, /scheduler|sampler/i, ['sampler_name']);
+                const cfg = getFirst(p, /guidance|sampler|cliptextencode/i, ['guidance', 'cfg']);
+                const seed = getFirst(p, /randomnoise|sampler|seed/i, ['noise_seed', 'seed']);
+                const w = getFirst(p, /latentimage|loader/i, ['width', 'empty_latent_width']);
+                const h = getFirst(p, /latentimage|loader/i, ['height', 'empty_latent_height']);
+                const model = getFirst(p, /checkpoint|loader/i, ['ckpt_name', 'base_ckpt_name', 'unet_name']);
+                if (steps != null) extra.push('Steps: ' + steps);
+                if (sampler) extra.push('Sampler: ' + sampler);
+                if (cfg != null) extra.push('CFG scale: ' + cfg);
+                if (seed != null) extra.push('Seed: ' + seed);
+                if (w != null && h != null) extra.push('Size: ' + w + 'x' + h);
+                if (model) extra.push('Model: ' + model);
+                return { prompt, negative, extra: extra.join(', ') };
+            }
+        }
+    } catch (e) {
+        console.warn('ComfyUI extraction failed:', e);
+    }
+    return null;
+}
+
 // --- Centralized prompt data distribution ---
 function distributePromptData(parsed, comment, sourceTag) {
     let found = false;
     if (parsed && typeof parsed === 'object') {
+        // --- CivitAI (parameters with extraMetadata, e.g. ComfyUI Civitai) ---
+        if (parsed.extraMetadata != null) {
+            const civit = extractCivitAIMetadata(parsed);
+            if (civit) {
+                setAndResize(positivePrompt, unescapePromptString(civit.prompt));
+                setAndResize(negativePrompt, unescapePromptString(civit.negative));
+                const additionalPromptsTextarea = document.getElementById('additional-prompts');
+                if (additionalPromptsTextarea) setAndResize(additionalPromptsTextarea, '');
+                if (promptInfoList) promptInfoList.innerHTML = '';
+                if (modelInfoList) modelInfoList.innerHTML = '';
+                if (civit.extra) addMetadataItem('Parameters', civit.extra, promptInfoList);
+                collectPromptInfo(parsed, function (key, value) {
+                    if (!isModelInfoKey(key, value)) addMetadataItem(key, value, promptInfoList);
+                }, function (key, value) {
+                    if (isModelInfoKey(key, value)) addMetadataItem(key, value, modelInfoList);
+                });
+                walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
+                clearWarning();
+                found = true;
+            }
+        }
+        // --- ComfyUI (prompt graph or generation_data) ---
+        if (!found && (parsed.generation_data || (parsed.prompt && typeof parsed.prompt === 'object' && Object.keys(parsed.prompt).some(function (k) {
+            const n = parsed.prompt[k];
+            return n && typeof n === 'object' && n.class_type;
+        })))) {
+            const comfy = extractComfyUIMetadata(parsed);
+            if (comfy) {
+                setAndResize(positivePrompt, unescapePromptString(comfy.prompt));
+                setAndResize(negativePrompt, unescapePromptString(comfy.negative));
+                const additionalPromptsTextarea = document.getElementById('additional-prompts');
+                if (additionalPromptsTextarea) setAndResize(additionalPromptsTextarea, '');
+                if (promptInfoList) promptInfoList.innerHTML = '';
+                if (modelInfoList) modelInfoList.innerHTML = '';
+                if (comfy.extra) addMetadataItem('Parameters', comfy.extra, promptInfoList);
+                collectPromptInfo(parsed, function (key, value) {
+                    if (!isModelInfoKey(key, value)) addMetadataItem(key, value, promptInfoList);
+                }, function (key, value) {
+                    if (isModelInfoKey(key, value)) addMetadataItem(key, value, modelInfoList);
+                });
+                walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
+                clearWarning();
+                found = true;
+            }
+        }
         // --- NovelAI v4/v5 JSON Handler ---
-        if (parsed.hasOwnProperty('signed_hash') && parsed.hasOwnProperty('sampler')) {
+        if (!found && parsed.hasOwnProperty('signed_hash') && parsed.hasOwnProperty('sampler')) {
             const positiveTexts = [];
             if (parsed.prompt && typeof parsed.prompt === 'string') {
                 positiveTexts.push(parsed.prompt);
@@ -477,13 +626,15 @@ class PNGMetadata {
             if (!chunks[type]) {
                 chunks[type] = { data_raw: [] };
             }
-            // For tEXt/iTXt/zTXt, decode as ISO-8859-1 string
-            if (['tEXt', 'iTXt', 'zTXt'].includes(type)) {
+            // For tEXt/iTXt, decode as ISO-8859-1 string; zTXt stores compressed data (decompressed in extractPngMetadata)
+            if (['tEXt', 'iTXt'].includes(type)) {
                 let text = '';
                 for (let i = 0; i < chunkData.length; i++) {
                     text += String.fromCharCode(chunkData[i]);
                 }
                 chunks[type].data_raw.push(text);
+            } else if (type === 'zTXt') {
+                chunks[type].data_raw.push(chunkData);
             } else if (type === 'eXIf') {
                 // Store raw EXIF bytes for eXIf chunk
                 chunks[type].data_raw.push(chunkData);
@@ -1122,10 +1273,66 @@ function binaryStringToText(binaryString) {
     return null;
 }
 
+// --- Decompress zTXt chunk (zlib); same approach as ai-image-metadata-editor: Blob stream + 'deflate' ---
+function decompressZlibToStr(zlibBytes) {
+    if (!zlibBytes.length || typeof DecompressionStream === 'undefined') return Promise.resolve(null);
+    const stream = new Blob([zlibBytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+    const reader = stream.getReader();
+    const chunks = [];
+    let total = 0;
+    return (function read() {
+        return reader.read().then(function (result) {
+            if (result.done) {
+                const dec = new Uint8Array(total);
+                let off = 0;
+                for (let c = 0; c < chunks.length; c++) {
+                    dec.set(chunks[c], off);
+                    off += chunks[c].length;
+                }
+                let s = '';
+                for (let i = 0; i < dec.length; i++) s += String.fromCharCode(dec[i]);
+                return s;
+            }
+            if (result.value) {
+                chunks.push(result.value);
+                total += result.value.byteLength;
+            }
+            return read();
+        });
+    })();
+}
+
+function decompressZtxt(rawBytes) {
+    if (!(rawBytes instanceof Uint8Array) || rawBytes.length < 3) {
+        return Promise.resolve({ text: '', fallback: '' });
+    }
+    const sepIdx = rawBytes.indexOf(0);
+    if (sepIdx === -1) return Promise.resolve({ text: '', fallback: '' });
+    const zlibStream = rawBytes.slice(sepIdx + 2);
+    if (zlibStream.length < 6) return Promise.resolve({ text: '', fallback: '' });
+
+    // Fallback: raw bytes as Latin-1 (so we can still show keyword and try to display)
+    let fallbackStr = '';
+    for (let j = 0; j < rawBytes.length; j++) fallbackStr += String.fromCharCode(rawBytes[j]);
+
+    if (typeof DecompressionStream === 'undefined') {
+        return Promise.resolve({ text: fallbackStr, fallback: fallbackStr });
+    }
+
+    return decompressZlibToStr(zlibStream)
+        .then(function (text) {
+            return text ? { text: text, fallback: fallbackStr } : { text: '', fallback: fallbackStr };
+        })
+        .catch(function (err) {
+            console.warn('zTXt decompression failed:', err);
+            return { text: '', fallback: fallbackStr };
+        });
+}
+
 // --- PNG metadata extraction with prompt distribution ---
 function extractPngMetadata(file) {
     const reader = new FileReader();
-    reader.onload = function (e) {
+    reader.onload = async function (e) {
         const arrayBuffer = e.target.result;
         const bytes = new Uint8Array(arrayBuffer);
         try {
@@ -1133,43 +1340,60 @@ function extractPngMetadata(file) {
             const chunks = pngMeta.getChunks();
             let found = false;
             // 1. Try tEXt, zTXt, iTXt chunks first
-            ['tEXt', 'zTXt', 'iTXt'].forEach(chunkType => {
-                if (chunks[chunkType] && chunks[chunkType].data_raw.length > 0) {
-                    for (let i = 0; i < chunks[chunkType].data_raw.length; i++) {
-                        const raw = chunks[chunkType].data_raw[i];
+            for (const chunkType of ['tEXt', 'zTXt', 'iTXt']) {
+                if (!chunks[chunkType] || chunks[chunkType].data_raw.length === 0) continue;
+                for (let i = 0; i < chunks[chunkType].data_raw.length; i++) {
+                    let raw = chunks[chunkType].data_raw[i];
+                    let keyword = '';
+                    let text = '';
+                    if (chunkType === 'zTXt' && raw instanceof Uint8Array) {
+                        const nul = raw.indexOf(0);
+                        if (nul <= 0) continue;
+                        keyword = String.fromCharCode.apply(null, raw.subarray(0, nul));
+                        const decompressed = await decompressZtxt(raw);
+                        const rawStr = (decompressed && decompressed.text) ? decompressed.text : (decompressed && decompressed.fallback) ? decompressed.fallback : '';
+                        if (!rawStr) continue;
+                        const sepIdx = rawStr.indexOf('\0');
+                        if (sepIdx >= 0) {
+                            keyword = rawStr.substring(0, sepIdx);
+                            text = rawStr.substring(sepIdx + 1);
+                        } else {
+                            text = rawStr;
+                        }
+                    } else {
                         const sepIdx = raw.indexOf('\0');
-                        if (sepIdx !== -1) {
-                            const keyword = raw.substring(0, sepIdx);
-                            const text = raw.substring(sepIdx + 1);
-                            console.log('PNG chunk:', chunkType, 'keyword:', keyword);
-                            if (["prompt", "parameters", "usercomment", "comment", "description", "result", "invokeai_metadata", "invokeai_graph"].includes(keyword.toLowerCase())) {
-                                let promptText = text;
-                                console.log('Found PNG metadata with keyword:', keyword);
-                                window.setPromptInfoAvailable(true);
+                        if (sepIdx === -1) continue;
+                        keyword = raw.substring(0, sepIdx);
+                        text = raw.substring(sepIdx + 1);
+                    }
+                    if (!keyword) continue;
+                    console.log('PNG chunk:', chunkType, 'keyword:', keyword);
+                    if (["prompt", "parameters", "usercomment", "comment", "description", "result", "invokeai_metadata", "invokeai_graph"].includes(keyword.toLowerCase())) {
+                        let promptText = text;
+                        console.log('Found PNG metadata with keyword:', keyword);
+                        window.setPromptInfoAvailable(true);
 
-                                // Trim leading text before JSON starts if it looks like NovelAI metadata
-                                let textToParse = promptText;
-                                if (promptText.includes('"sampler"') && promptText.includes('"signed_hash"')) {
-                                    const jsonStartIndex = promptText.indexOf('{');
-                                    if (jsonStartIndex > -1) {
-                                        textToParse = promptText.substring(jsonStartIndex);
-                                    }
-                                }
-                                
-                                let parsed = safeJsonParse(textToParse);
-                                distributePromptData(parsed, promptText, keyword);
-                                found = true;
-                                // --- Auto-expand the additional info section for PNGs with metadata
-                                if (typeof window.showExpandedInfo === 'function') {
-                                    window.showExpandedInfo();
-                                } else if (typeof setExpanded === 'function') {
-                                    setExpanded(true);
-                                }
+                        // Trim leading text before JSON starts if it looks like NovelAI metadata
+                        let textToParse = promptText;
+                        if (promptText.includes('"sampler"') && promptText.includes('"signed_hash"')) {
+                            const jsonStartIndex = promptText.indexOf('{');
+                            if (jsonStartIndex > -1) {
+                                textToParse = promptText.substring(jsonStartIndex);
                             }
+                        }
+                        
+                        let parsed = safeJsonParse(textToParse);
+                        distributePromptData(parsed, promptText, keyword);
+                        found = true;
+                        // --- Auto-expand the additional info section for PNGs with metadata
+                        if (typeof window.showExpandedInfo === 'function') {
+                            window.showExpandedInfo();
+                        } else if (typeof setExpanded === 'function') {
+                            setExpanded(true);
                         }
                     }
                 }
-            });
+            }
             // 2. If not found, try eXIf chunk
             if (!found && chunks['eXIf'] && chunks['eXIf'].data_raw.length > 0) {
                 console.log('PNG: No metadata in text chunks, trying eXIf chunk');
