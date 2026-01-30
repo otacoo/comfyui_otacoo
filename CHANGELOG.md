@@ -1,3 +1,10 @@
+## v1.1.0
+*2026-01-30*
+
+- Add support for InvokeAI metadata
+- Improve ComfyUI metadata parsing when using Civitai formats
+- Improve overall metadata parsing and certain positive prompts
+
 ## v1.0.4
 *2025-01-20*
 
