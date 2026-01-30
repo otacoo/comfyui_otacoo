@@ -79,6 +79,7 @@ function extractCivitAIMetadata(parsed) {
 // --- ComfyUI: prompt graph (class_type nodes) or generation_data ---
 function extractComfyUIMetadata(parsed) {
     const negativeKeywords = /bad quality|worst quality|low quality|bad anatomy|lowres/i;
+    const positiveKeywords = /masterpiece|absurdres|best quality|very aesthetic|1girl|2girls|3girls/i;
     function getNodesValues(graph, classTypeRegex, fields, excludeNegative) {
         if (!graph || typeof graph !== 'object') return [];
         const out = [];
@@ -92,7 +93,10 @@ function extractComfyUIMetadata(parsed) {
             vals.forEach(function (val) {
                 const str = String(val).replace(/_/g, ' ');
                 if (excludeNegative && negativeKeywords.test(str)) return;
-                if (!excludeNegative && !negativeKeywords.test(str)) return;
+                if (!excludeNegative) {
+                    if (!negativeKeywords.test(str)) return;
+                    if (positiveKeywords.test(str)) return;
+                }
                 out.push(typeof val === 'number' ? String(val) : val);
             });
         }
@@ -1645,10 +1649,11 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
                 // "value", "string_a", "string_b" treated as positive prompt (InvokeAI, ComfyUI)
                 positiveArr.push(value);
             } else if (promptKeys.includes(normKey)) {
-                if (negativeRegex.test(value)) {
-                    negativeArr.push(value);
-                } else if (positiveRegex.test(value)) {
+                // Text containing positive indicators (e.g. "masterpiece") must never go to negative prompt
+                if (positiveRegex.test(value)) {
                     positiveArr.push(value);
+                } else if (negativeRegex.test(value)) {
+                    negativeArr.push(value);
                 }
                 // If it doesn't match either, don't add it
             }
