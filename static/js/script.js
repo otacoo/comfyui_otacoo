@@ -110,6 +110,49 @@ function distributePromptData(parsed, comment, sourceTag) {
             walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
             clearWarning();
             found = true;
+        } else if (parsed.generation_mode !== undefined && (parsed.positive_prompt !== undefined || parsed.negative_prompt !== undefined || parsed.value !== undefined || parsed.Value !== undefined)) {
+            // --- InvokeAI metadata (Invokeai_metadata chunk / WebP EXIF) ---
+            const positiveParts = [];
+            if (typeof parsed.positive_prompt === 'string' && parsed.positive_prompt.trim()) {
+                positiveParts.push(parsed.positive_prompt);
+            }
+            // "value" / "Value" holds the positive prompt (e.g. in graph or WebP)
+            const valueStr = parsed.value ?? parsed.Value;
+            if (typeof valueStr === 'string' && valueStr.trim()) {
+                positiveParts.push(valueStr);
+            }
+            const positiveText = positiveParts.map(unescapePromptString).join('\n\n');
+            const negativeText = typeof parsed.negative_prompt === 'string' ? parsed.negative_prompt : '';
+            setAndResize(positivePrompt, positiveText);
+            setAndResize(negativePrompt, unescapePromptString(negativeText));
+
+            const additionalPromptsTextarea = document.getElementById('additional-prompts');
+            if (additionalPromptsTextarea) {
+                setAndResize(additionalPromptsTextarea, '');
+            }
+
+            if (promptInfoList) promptInfoList.innerHTML = '';
+            if (modelInfoList) modelInfoList.innerHTML = '';
+
+            const infoData = { ...parsed };
+            delete infoData.positive_prompt;
+            delete infoData.negative_prompt;
+            delete infoData.value;
+            delete infoData.Value;
+
+            collectPromptInfo(
+                infoData,
+                (key, value) => {
+                    if (!isModelInfoKey(key, value)) { addMetadataItem(key, value, promptInfoList); }
+                },
+                (key, value) => {
+                    if (isModelInfoKey(key, value)) { addMetadataItem(key, value, modelInfoList); }
+                }
+            );
+
+            walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            clearWarning();
+            found = true;
         } else {
             // --- Generic JSON Handler ---
             // 1. Collect all "text" values (recursively) for positive and negative prompts
@@ -970,7 +1013,14 @@ function extractUserCommentFromWebp(file) {
             if (comment && comment.trim()) {
                 console.log('Using WebP UserComment fallback:', comment);
                 clearWarning();
-                parseAndDisplayUserComment(comment);
+                // Try JSON first (e.g. InvokeAI metadata in WebP UserComment)
+                let jsonStr = stripPromptPrefix(comment.trim());
+                let parsed = safeJsonParse(jsonStr);
+                if (parsed && typeof parsed === 'object') {
+                    distributePromptData(parsed, comment, 'UserComment');
+                } else {
+                    parseAndDisplayUserComment(comment);
+                }
             } else {
                 window.setPromptInfoAvailable(false);
                 showWarning('❌ No metadata found');
@@ -1092,7 +1142,7 @@ function extractPngMetadata(file) {
                             const keyword = raw.substring(0, sepIdx);
                             const text = raw.substring(sepIdx + 1);
                             console.log('PNG chunk:', chunkType, 'keyword:', keyword);
-                            if (["prompt", "parameters", "usercomment", "comment", "description", "result"].includes(keyword.toLowerCase())) {
+                            if (["prompt", "parameters", "usercomment", "comment", "description", "result", "invokeai_metadata", "invokeai_graph"].includes(keyword.toLowerCase())) {
                                 let promptText = text;
                                 console.log('Found PNG metadata with keyword:', keyword);
                                 window.setPromptInfoAvailable(true);
@@ -1349,7 +1399,7 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         return;
     }
     // Define keys to check for prompt text (case-insensitive, ignore trailing colon/whitespace)
-    const promptKeys = ['text', 'text_l', 'text_a', 'text_b', 'negative', 'positive', 'result', 'tags', 'string', 'string_field', 'prompt', 'populated_text'];
+    const promptKeys = ['text', 'text_l', 'text_a', 'text_b', 'negative', 'positive', 'result', 'tags', 'string', 'string_field', 'prompt', 'populated_text', 'value'];
     // Negative/positive regex
     const negativeRegex = /low quality|censored|lowres|watermark|jpeg artifacts|worst quality|bad quality/i;
     const positiveRegex = /masterpiece|absurdres|best quality|very aesthetic|1girl|2girls|3girls/i;
@@ -1360,7 +1410,10 @@ function collectTextValuesWithNegatives(obj, positiveArr, negativeArr) {
         if (typeof value === 'string') {
             // Normalize key: lowercase, remove trailing colon/whitespace
             const normKey = key.trim().replace(/:$/, '').toLowerCase();
-            if (promptKeys.includes(normKey)) {
+            if (normKey === 'value') {
+                // "value" is treated as positive prompt (e.g. InvokeAI)
+                positiveArr.push(value);
+            } else if (promptKeys.includes(normKey)) {
                 if (negativeRegex.test(value)) {
                     negativeArr.push(value);
                 } else if (positiveRegex.test(value)) {
