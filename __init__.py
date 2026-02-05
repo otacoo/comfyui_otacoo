@@ -3,7 +3,6 @@ from aiohttp import web
 from server import PromptServer  # type: ignore
 
 class imgExtractor:
-    """Main entry point for imgExtractor plugin"""
 
     @classmethod
     def add_routes(cls):
@@ -15,7 +14,7 @@ class imgExtractor:
         static_dir = os.path.join(base_dir, "static")
 
         # Serve static files
-        app.router.add_static('/comfyui_otacoo/static', static_dir)
+        app.router.add_static('/comfyui_metadata_extract/static', static_dir)
 
         # Serve imgextract.html at /imgextract
         async def serve_imgextract(request):

@@ -60,7 +60,7 @@ const replaceButtonIcon = () => {
 };
 
 app.registerExtension({
-    name: "otacoo-imgextract.widget",
+    name: "otacoo-metadata-extract.widget",
     actionBarButtons: [
         {
             icon: "icon-[mdi--image-search] size-4",
