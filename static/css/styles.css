@@ -263,7 +263,7 @@ h2 {
 
 .prompt-info-list li,
 .model-info-list li {
-    margin-bottom: 0.5em;
+    margin-bottom: .5em;
     color: var(--secondary-text);
 }
 
@@ -271,17 +271,17 @@ h2 {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0.5em 0 1em 0;
+    margin: .5em 0 .5em 0;
     user-select: none;
     cursor: pointer;
-    gap: 0.5em;
+    gap: .5em;
 }
 .expand-toggle-text {
     font-weight: 600;
     color: var(--accent-color);
     cursor: pointer;
     outline: none;
-    transition: color 0.2s;
+    transition: color .2s;
 }
 
 .expand-toggle-text:hover {
