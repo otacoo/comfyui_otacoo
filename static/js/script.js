@@ -14,6 +14,40 @@ const promptInfoList = document.getElementById('prompt-info-list');
 const modelInfoList = document.getElementById('model-info-list');
 const warningSpan = document.getElementById('warning');
 
+// --- Decode byte array as UTF-8 (with Latin-1 fallback for old runtimes) ---
+function decodeBytesToUtf8String(bytes) {
+    if (!bytes || !bytes.length) return '';
+    try {
+        if (typeof TextDecoder !== 'undefined') {
+            return new TextDecoder('utf-8', { fatal: false }).decode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+        }
+    } catch (e) { /* fall through */ }
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i] & 0xff);
+    return s;
+}
+
+// --- PNG keywords to look for in tEXt/zTXt/iTXt chunks ---
+function getPngKeywordsFromFormats() {
+    return ['parameters', 'davant__batch_parameters', 'description', 'creation time', 'author', 'usercomment', 'creatortool', 'fooocus_scheme', 'invokeai_metadata', 'invokeai_graph', 'comment', 'title', 'software', 'source', 'result', 'prompt', 'workflow', 'generation_data', 'generation_time', 'camera_manufacturer', 'image_description'];
+}
+
+function getFormatFieldNames(formatName) {
+    var map = {
+        CivitAI: ['parameters'],
+        ComfyUI: ['prompt', 'workflow', 'generation_data'],
+        InvokeAI: ['invokeai_metadata', 'invokeai_graph'],
+        Midjourney: ['description']
+    };
+    return map[formatName] || [];
+}
+
+function formatFieldDisplayLabel(fieldKey) {
+    var known = { prompt: 'Prompt', workflow: 'Workflow', generation_data: 'Generation data', invokeai_graph: 'InvokeAI graph', invokeai_metadata: 'InvokeAI metadata', parameters: 'Parameters', user_comment: 'User comment', comment: 'Comment', description: 'Description', title: 'Title', software: 'Software', source: 'Source', fooocus_scheme: 'Fooocus scheme', davant__batch_parameters: 'DAVANT batch parameters', creatortool: 'Creator tool', camera_manufacturer: 'Camera manufacturer', image_description: 'Image description' };
+    var lower = (fieldKey || '').toString().toLowerCase();
+    return known[lower] || (fieldKey + '').replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); });
+}
+
 // --- Helper: Set textarea value and auto-resize ---
 function setAndResize(textarea, value) {
     if (textarea) {
@@ -29,6 +63,7 @@ function stripPromptPrefix(str) {
 }
 
 // --- Helper: Determine if a key should go to model-info-list ---
+// Only essential model identity: lora name, hashes, model name/hash, vae name/hash. Skip ComfyUI noise.
 function isModelInfoKey(key, value) {
     if (!key) return false;
     // Skip if value is missing, empty, or 'none'
@@ -40,17 +75,30 @@ function isModelInfoKey(key, value) {
     ) {
         return false;
     }
-    const normalized = key.trim().toLowerCase();
+    const normalized = key.trim().toLowerCase().replace(/\s+/g, '');
+    const nWithSpaces = key.trim().toLowerCase();
+
+    // Exclude ComfyUI / ComfyUI-like noise (weights, count, strength, etc.)
+    if (
+        /^lora(wt|weight|weights?|count|modelstrength|strength|clipstrength)/i.test(normalized) ||
+        /^lora\s*(wt|weight|count|model\s*strength|strength)/i.test(nWithSpaces) ||
+        /strength_model|strength_clip|loracount|lorawt/i.test(normalized)
+    ) {
+        return false;
+    }
+
+    // Only allow: lora name, lora hashes, model/checkpoint name, model/ckpt hash, vae name, vae hash
     const modelKeys = [
-        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelname', 'lora', 'lora_name', 'lora hashes'
+        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelname', 'lora', 'lora_name', 'loraname',
+        'lorahashes', 'modelhash', 'model_hash', 'ckpt_hash', 'hash', 'vae', 'vae_name', 'vaename', 'vae_hash', 'vaehash'
     ];
     return (
         modelKeys.includes(normalized) ||
-        // lora_* or lora-* pattern (case-insensitive)
-        /^lora[_\-].+/i.test(normalized) ||
-        // "lora hashes" with any whitespace
-        normalized.replace(/\s+/g, '') === 'lorahashes' ||
-        /^model[_]?name$/.test(normalized)
+        /^model[_]?name$/.test(normalized) ||
+        /^vae[_]?name$/.test(normalized) ||
+        /^vae[_]?hash$/.test(normalized) ||
+        // lora_name or lora-name (but not lora_wt, lora_count, etc. — already excluded above)
+        /^lora[_\-]name$/i.test(normalized)
     );
 }
 
@@ -163,33 +211,53 @@ function extractComfyUIMetadata(parsed) {
     return null;
 }
 
+function isInvokeAIKeyword(tag) {
+    if (tag == null || typeof tag !== 'string') return false;
+    var n = tag.toLowerCase().replace(/-/g, '_').trim();
+    return n === 'invokeai_metadata' || n === 'invokeai_graph';
+}
+
+function isMidjourneyKeyword(tag) {
+    if (tag == null || typeof tag !== 'string') return false;
+    return tag.trim().toLowerCase() === 'description';
+}
+
+function isNovelAIMetadata(parsed) {
+    return parsed && typeof parsed === 'object' && parsed.hasOwnProperty('signed_hash') && parsed.hasOwnProperty('sampler');
+}
+
+function isNovelAISoftware(parsed) {
+    if (!parsed || typeof parsed !== 'object') return false;
+    var sw = parsed.software || parsed.Software;
+    return typeof sw === 'string' && sw.toLowerCase().indexOf('novelai') !== -1;
+}
+
+function isNovelAI(parsed) {
+    return isNovelAIMetadata(parsed) || isNovelAISoftware(parsed);
+}
+
 // --- Centralized prompt data distribution ---
 function distributePromptData(parsed, comment, sourceTag) {
     let found = false;
-    if (parsed && typeof parsed === 'object') {
-        // --- CivitAI (parameters with extraMetadata, e.g. ComfyUI Civitai) ---
-        if (parsed.extraMetadata != null) {
-            const civit = extractCivitAIMetadata(parsed);
-            if (civit) {
-                setAndResize(positivePrompt, unescapePromptString(civit.prompt));
-                setAndResize(negativePrompt, unescapePromptString(civit.negative));
-                const additionalPromptsTextarea = document.getElementById('additional-prompts');
-                if (additionalPromptsTextarea) setAndResize(additionalPromptsTextarea, '');
-                if (promptInfoList) promptInfoList.innerHTML = '';
-                if (modelInfoList) modelInfoList.innerHTML = '';
-                if (civit.extra) addMetadataItem('Parameters', civit.extra, promptInfoList);
-                collectPromptInfo(parsed, function (key, value) {
-                    if (!isModelInfoKey(key, value)) addMetadataItem(key, value, promptInfoList);
-                }, function (key, value) {
-                    if (isModelInfoKey(key, value)) addMetadataItem(key, value, modelInfoList);
-                });
-                walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
-                setGenerationMetadataType('CivitAI');
-                clearWarning();
-                found = true;
-            }
+    // Midjourney: keyword "Description" with plain text only. NovelAI uses Description/Comment as JSON or has Software: "NovelAI".
+    if (isMidjourneyKeyword(sourceTag) && !isNovelAI(parsed)) {
+        var descText = (comment && typeof comment === 'string') ? comment : (parsed && typeof parsed === 'string') ? parsed : '';
+        setAndResize(positivePrompt, unescapePromptString(descText));
+        setAndResize(negativePrompt, '');
+        var additionalPromptsTextarea = document.getElementById('additional-prompts');
+        if (additionalPromptsTextarea) setAndResize(additionalPromptsTextarea, '');
+        if (promptInfoList) promptInfoList.innerHTML = '';
+        if (modelInfoList) modelInfoList.innerHTML = '';
+        if (descText.trim()) addMetadataItem('Description', descText, promptInfoList);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+            addMetadataAsJsonBlock(parsed, promptInfoList, 'Midjourney', sourceTag);
         }
-        // --- ComfyUI (prompt graph or generation_data) ---
+        setGenerationMetadataType('Midjourney');
+        clearWarning();
+        found = true;
+    }
+    if (!found && parsed && typeof parsed === 'object') {
+        // --- ComfyUI ---
         if (!found && (parsed.generation_data || (parsed.prompt && typeof parsed.prompt === 'object' && Object.keys(parsed.prompt).some(function (k) {
             const n = parsed.prompt[k];
             return n && typeof n === 'object' && n.class_type;
@@ -203,15 +271,15 @@ function distributePromptData(parsed, comment, sourceTag) {
                 if (promptInfoList) promptInfoList.innerHTML = '';
                 if (modelInfoList) modelInfoList.innerHTML = '';
                 if (comfy.extra) addMetadataItem('Parameters', comfy.extra, promptInfoList);
-                addMetadataAsJsonBlock(parsed, promptInfoList, sourceTag);
-                walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
+                addMetadataAsJsonBlock(parsed, promptInfoList, 'ComfyUI', sourceTag);
+                walkForModelInfo(parsed, function (k, v) { addModelInfoItem(k, v); });
                 setGenerationMetadataType('ComfyUI');
                 clearWarning();
                 found = true;
             }
         }
-        // --- NovelAI v4/v5 JSON Handler ---
-        if (!found && parsed.hasOwnProperty('signed_hash') && parsed.hasOwnProperty('sampler')) {
+        // --- NovelAI v4/v5 JSON Handler (signed_hash+sampler or Software contains "NovelAI") ---
+        if (!found && isNovelAI(parsed)) {
             const positiveTexts = [];
             if (parsed.prompt && typeof parsed.prompt === 'string') {
                 positiveTexts.push(parsed.prompt);
@@ -248,46 +316,37 @@ function distributePromptData(parsed, comment, sourceTag) {
             delete infoData.v4_prompt;
             delete infoData.v4_negative_prompt;
 
-            collectPromptInfo(
-                infoData,
-                (key, value) => {
-                    if (!isModelInfoKey(key, value)) { addMetadataItem(key, value, promptInfoList); }
-                },
-                (key, value) => {
-                    if (isModelInfoKey(key, value)) { addMetadataItem(key, value, modelInfoList); }
-                }
-            );
-
-            walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            collectPromptInfo(infoData, function (key, value) {
+                if (!isModelInfoKey(key, value)) addMetadataItem(key, value, promptInfoList);
+            }, function (key, value) {
+                if (isModelInfoKey(key, value)) addModelInfoItem(key, value);
+            });
+            walkForModelInfo(parsed, addModelInfoItem);
             setGenerationMetadataType('NovelAI');
             clearWarning();
             found = true;
-        } else if (parsed.generation_mode !== undefined && (parsed.positive_prompt !== undefined || parsed.negative_prompt !== undefined || parsed.value !== undefined || parsed.Value !== undefined)) {
-            // --- InvokeAI metadata (Invokeai_metadata chunk / WebP EXIF) ---
-            const positiveParts = [];
-            if (typeof parsed.positive_prompt === 'string' && parsed.positive_prompt.trim()) {
-                positiveParts.push(parsed.positive_prompt);
+        } else if (isInvokeAIKeyword(sourceTag)) {
+            // --- InvokeAI (detected by PNG/WebP chunk keyword invokeai_metadata or invokeai_graph) ---
+            var meta = getValueIgnoreCase(parsed, 'invokeai_metadata');
+            if (meta == null || typeof meta !== 'object') meta = parsed;
+            var positiveParts = [];
+            if (typeof meta.positive_prompt === 'string' && meta.positive_prompt.trim()) {
+                positiveParts.push(meta.positive_prompt);
             }
-            // "value" / "Value" holds the positive prompt (e.g. in graph or WebP)
-            const valueStr = parsed.value ?? parsed.Value;
+            var valueStr = meta.value !== undefined ? meta.value : meta.Value;
             if (typeof valueStr === 'string' && valueStr.trim()) {
                 positiveParts.push(valueStr);
             }
-            const positiveText = positiveParts.map(unescapePromptString).join('\n\n');
-            const negativeText = typeof parsed.negative_prompt === 'string' ? parsed.negative_prompt : '';
+            var positiveText = positiveParts.map(unescapePromptString).join('\n\n');
+            var negativeText = typeof meta.negative_prompt === 'string' ? meta.negative_prompt : '';
             setAndResize(positivePrompt, positiveText);
             setAndResize(negativePrompt, unescapePromptString(negativeText));
-
-            const additionalPromptsTextarea = document.getElementById('additional-prompts');
-            if (additionalPromptsTextarea) {
-                setAndResize(additionalPromptsTextarea, '');
-            }
-
+            var additionalPromptsTextarea = document.getElementById('additional-prompts');
+            if (additionalPromptsTextarea) setAndResize(additionalPromptsTextarea, '');
             if (promptInfoList) promptInfoList.innerHTML = '';
             if (modelInfoList) modelInfoList.innerHTML = '';
-
-            addMetadataAsJsonBlock(parsed, promptInfoList, sourceTag);
-            walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            addMetadataAsJsonBlock(parsed, promptInfoList, 'InvokeAI', sourceTag);
+            walkForModelInfo(meta, function (k, v) { addModelInfoItem(k, v); });
             setGenerationMetadataType('InvokeAI');
             clearWarning();
             found = true;
@@ -328,8 +387,8 @@ function distributePromptData(parsed, comment, sourceTag) {
             // 3. Additional Info as JSON block; Models list from model keys only
             if (promptInfoList) promptInfoList.innerHTML = '';
             if (modelInfoList) modelInfoList.innerHTML = '';
-            addMetadataAsJsonBlock(parsed, promptInfoList, sourceTag);
-            walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
+            addMetadataAsJsonBlock(parsed, promptInfoList, 'ComfyUI', sourceTag);
+            walkForModelInfo(parsed, function (k, v) { addModelInfoItem(k, v); });
             setGenerationMetadataType('ComfyUI');
             clearWarning();
             found = true;
@@ -477,37 +536,43 @@ function parseExif(view, start) {
             const numValues = getUint32(entryOffset + 4);
             let valueOffset = entryOffset + 8;
             let value;
-            if (type === 2) { // ASCII string
+            if (type === 2) { // ASCII / often UTF-8 in practice (e.g. ImageDescription with CJK)
                 const offset = numValues > 4 ? getUint32(valueOffset) + tiffOffset : valueOffset;
-                value = '';
-                for (let n = 0; n < numValues - 1; n++) {
-                    value += String.fromCharCode(view.getUint8(offset + n));
-                }
-            } else if (type === 7) { // UNDEFINED (UserComment)
+                const arr = new Uint8Array(numValues - 1);
+                for (let n = 0; n < numValues - 1; n++) arr[n] = view.getUint8(offset + n);
+                value = decodeBytesToUtf8String(arr);
+            } else if (type === 7) { // UNDEFINED (UserComment) — plain text, often JSON-like
                 const offset = numValues > 4 ? getUint32(valueOffset) + tiffOffset : valueOffset;
-                // Check for encoding prefix
-                let prefix = '';
-                for (let n = 0; n < 8; n++) {
-                    prefix += String.fromCharCode(view.getUint8(offset + n));
-                }
-                let text = '';
-                if (prefix.startsWith('ASCII')) {
-                    for (let n = 8; n < numValues; n++) {
-                        text += String.fromCharCode(view.getUint8(offset + n));
-                    }
-                } else if (prefix.startsWith('UNICODE')) {
-                    // Unicode (UTF-16), skip prefix, read as 2-byte chars
-                    for (let n = 8; n + 1 < numValues; n += 2) {
-                        const code = (view.getUint8(offset + n) << 8) | view.getUint8(offset + n + 1);
-                        text += String.fromCharCode(code);
-                    }
+                const payloadLen = Math.max(0, numValues - 8);
+                const payload = new Uint8Array(payloadLen);
+                for (let n = 0; n < payloadLen; n++) payload[n] = view.getUint8(offset + 8 + n);
+                // Many writers store JSON as UTF-8 regardless of prefix; try UTF-8 first when it looks like JSON
+                const utf8Text = decodeBytesToUtf8String(payload).replace(/\0+$/, '').replace(/^\uFEFF/, '');
+                if ((utf8Text.trim().startsWith('{') || utf8Text.trim().startsWith('[')) && utf8Text.trim().length > 1) {
+                    value = utf8Text;
                 } else {
-                    // Unknown encoding, fallback to ASCII
-                    for (let n = 8; n < numValues; n++) {
-                        text += String.fromCharCode(view.getUint8(offset + n));
+                    const prefixBytes = [];
+                    for (let n = 0; n < 8 && n < numValues; n++) {
+                        prefixBytes.push(view.getUint8(offset + n));
                     }
+                    const prefix = String.fromCharCode.apply(null, prefixBytes);
+                    let text = '';
+                    if (prefix.startsWith('ASCII')) {
+                        for (let n = 8; n < numValues; n++) {
+                            text += String.fromCharCode(view.getUint8(offset + n));
+                        }
+                    } else if (prefix.startsWith('UNICODE')) {
+                        for (let n = 8; n + 1 < numValues; n += 2) {
+                            const code = (view.getUint8(offset + n) << 8) | view.getUint8(offset + n + 1);
+                            text += String.fromCharCode(code);
+                        }
+                    } else if (prefix.startsWith('UTF-8') || prefix.startsWith('UTF8')) {
+                        text = decodeBytesToUtf8String(payload);
+                    } else {
+                        text = decodeBytesToUtf8String(payload);
+                    }
+                    value = text.replace(/\0+$/, '').replace(/^\uFEFF/, '');
                 }
-                value = text.replace(/\0+$/, ''); // Remove trailing nulls
             } else {
                 value = getUint32(valueOffset);
             }
@@ -600,13 +665,9 @@ class PNGMetadata {
             if (!chunks[type]) {
                 chunks[type] = { data_raw: [] };
             }
-            // For tEXt/iTXt, decode as ISO-8859-1 string; zTXt stores compressed data (decompressed in extractPngMetadata)
+            // For tEXt/iTXt, decode as UTF-8 so CJK and other Unicode in metadata parse correctly; zTXt stores compressed data (decompressed in extractPngMetadata)
             if (['tEXt', 'iTXt'].includes(type)) {
-                let text = '';
-                for (let i = 0; i < chunkData.length; i++) {
-                    text += String.fromCharCode(chunkData[i]);
-                }
-                chunks[type].data_raw.push(text);
+                chunks[type].data_raw.push(decodeBytesToUtf8String(chunkData));
             } else if (type === 'zTXt') {
                 chunks[type].data_raw.push(chunkData);
             } else if (type === 'eXIf') {
@@ -695,7 +756,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (stripMetadataBtn) stripMetadataBtn.style.display = visible ? 'block' : 'none';
     }
 
-    // --- Helper: Set expanded/collapsed state for additional info ---
+    // --- Helper: Set expanded/collapsed state for additional info & code blocks ---
     function setExpanded(state) {
         expanded = !!state;
         if (additionalContainer) {
@@ -1007,14 +1068,71 @@ function extractExifMetadata(file) {
     reader.readAsArrayBuffer(file);
 }
 
+// --- Helper: Escape control characters inside JSON string literals (so JSON.parse can succeed) ---
+function escapeControlCharsInJsonString(str) {
+    if (typeof str !== 'string') return str;
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+    let i = 0;
+    while (i < str.length) {
+        const c = str[i];
+        const code = c.charCodeAt(0);
+        if (escapeNext) {
+            result += c;
+            escapeNext = false;
+            i++;
+            continue;
+        }
+        if (inString) {
+            if (c === '\\') {
+                result += c;
+                escapeNext = true;
+                i++;
+                continue;
+            }
+            if (c === '"') {
+                result += c;
+                inString = false;
+                i++;
+                continue;
+            }
+            if (code < 32 || code === 127) {
+                if (code === 9) result += '\\t';
+                else if (code === 10) result += '\\n';
+                else if (code === 13) result += '\\r';
+                else result += '\\u' + ('0000' + code.toString(16)).slice(-4);
+                i++;
+                continue;
+            }
+            result += c;
+            i++;
+            continue;
+        }
+        if (c === '"') {
+            result += c;
+            inString = true;
+            i++;
+            continue;
+        }
+        result += c;
+        i++;
+    }
+    return result;
+}
+
 // --- Helper: JSON-like string parsers ---
 function safeJsonParse(str) {
     if (!str || typeof str !== 'string') {
         console.warn('safeJsonParse: Input is not a string', str);
         return null;
     }
-    // Trim the string
-    let fixed = str.trim();
+    // Trim and strip BOM / zero-width chars (can cause "expected property name or '}'" at column 2)
+    let fixed = str.trim().replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
+    // Strip U+0000: EXIF UserComment is often UTF-16LE; if decoded as UTF-8 we get char+NUL between every char
+    fixed = fixed.replace(/\u0000/g, '');
+    // Strip control chars immediately after { or [ (e.g. from EXIF encoding)
+    fixed = fixed.replace(/^(\{|\[)[\x00-\x1f]+/g, '$1');
     // Only try to parse if it looks like JSON
     if (!(fixed.startsWith('{') || fixed.startsWith('['))) {
         return null;
@@ -1025,6 +1143,8 @@ function safeJsonParse(str) {
     fixed = fixed.replace(/\bNaN\b/g, 'null');
     // Remove trailing commas before } or ]
     fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+    // Escape control chars inside string literals (e.g. in nested extraMetadata values)
+    fixed = escapeControlCharsInJsonString(fixed);
     try {
         return JSON.parse(fixed);
     } catch (err) {
@@ -1263,9 +1383,7 @@ function decompressZlibToStr(zlibBytes) {
                     dec.set(chunks[c], off);
                     off += chunks[c].length;
                 }
-                let s = '';
-                for (let i = 0; i < dec.length; i++) s += String.fromCharCode(dec[i]);
-                return s;
+                return decodeBytesToUtf8String(dec);
             }
             if (result.value) {
                 chunks.push(result.value);
@@ -1285,9 +1403,8 @@ function decompressZtxt(rawBytes) {
     const zlibStream = rawBytes.slice(sepIdx + 2);
     if (zlibStream.length < 6) return Promise.resolve({ text: '', fallback: '' });
 
-    // Fallback: raw bytes as Latin-1 (so we can still show keyword and try to display)
-    let fallbackStr = '';
-    for (let j = 0; j < rawBytes.length; j++) fallbackStr += String.fromCharCode(rawBytes[j]);
+    // Fallback: decode raw bytes as UTF-8 so CJK in metadata is preserved
+    let fallbackStr = decodeBytesToUtf8String(rawBytes);
 
     if (typeof DecompressionStream === 'undefined') {
         return Promise.resolve({ text: fallbackStr, fallback: fallbackStr });
@@ -1312,22 +1429,25 @@ function extractPngMetadata(file) {
         try {
             const pngMeta = new PNGMetadata(bytes, 'byte');
             const chunks = pngMeta.getChunks();
-            let found = false;
-            // 1. Try tEXt, zTXt, iTXt chunks first
-            for (const chunkType of ['tEXt', 'zTXt', 'iTXt']) {
+            var found = false;
+            var pngKeywords = getPngKeywordsFromFormats();
+            var collectedByKeyword = {};
+            // 1. Collect all tEXt/zTXt/iTXt chunks with relevant keywords
+            for (var chunkTypeIdx = 0; chunkTypeIdx < 3; chunkTypeIdx++) {
+                var chunkType = ['tEXt', 'zTXt', 'iTXt'][chunkTypeIdx];
                 if (!chunks[chunkType] || chunks[chunkType].data_raw.length === 0) continue;
-                for (let i = 0; i < chunks[chunkType].data_raw.length; i++) {
-                    let raw = chunks[chunkType].data_raw[i];
-                    let keyword = '';
-                    let text = '';
+                for (var i = 0; i < chunks[chunkType].data_raw.length; i++) {
+                    var raw = chunks[chunkType].data_raw[i];
+                    var keyword = '';
+                    var text = '';
                     if (chunkType === 'zTXt' && raw instanceof Uint8Array) {
-                        const nul = raw.indexOf(0);
+                        var nul = raw.indexOf(0);
                         if (nul <= 0) continue;
-                        keyword = String.fromCharCode.apply(null, raw.subarray(0, nul));
-                        const decompressed = await decompressZtxt(raw);
-                        const rawStr = (decompressed && decompressed.text) ? decompressed.text : (decompressed && decompressed.fallback) ? decompressed.fallback : '';
+                        keyword = decodeBytesToUtf8String(raw.subarray(0, nul)).replace(/\0/g, '');
+                        var decompressed = await decompressZtxt(raw);
+                        var rawStr = (decompressed && decompressed.text) ? decompressed.text : (decompressed && decompressed.fallback) ? decompressed.fallback : '';
                         if (!rawStr) continue;
-                        const sepIdx = rawStr.indexOf('\0');
+                        var sepIdx = rawStr.indexOf('\0');
                         if (sepIdx >= 0) {
                             keyword = rawStr.substring(0, sepIdx);
                             text = rawStr.substring(sepIdx + 1);
@@ -1335,38 +1455,121 @@ function extractPngMetadata(file) {
                             text = rawStr;
                         }
                     } else {
-                        const sepIdx = raw.indexOf('\0');
+                        var sepIdx = raw.indexOf('\0');
                         if (sepIdx === -1) continue;
                         keyword = raw.substring(0, sepIdx);
                         text = raw.substring(sepIdx + 1);
                     }
                     if (!keyword) continue;
                     console.log('PNG chunk:', chunkType, 'keyword:', keyword);
-                    if (["prompt", "parameters", "usercomment", "comment", "description", "result", "invokeai_metadata", "invokeai_graph"].includes(keyword.toLowerCase())) {
-                        let promptText = text;
-                        console.log('Found PNG metadata with keyword:', keyword);
-                        window.setPromptInfoAvailable(true);
-
-                        // Trim leading text before JSON starts if it looks like NovelAI metadata
-                        let textToParse = promptText;
-                        if (promptText.includes('"sampler"') && promptText.includes('"signed_hash"')) {
-                            const jsonStartIndex = promptText.indexOf('{');
-                            if (jsonStartIndex > -1) {
-                                textToParse = promptText.substring(jsonStartIndex);
-                            }
-                        }
-                        
-                        let parsed = safeJsonParse(textToParse);
-                        distributePromptData(parsed, promptText, keyword);
-                        found = true;
-                        // --- Auto-expand the additional info section for PNGs with metadata
-                        if (typeof window.showExpandedInfo === 'function') {
-                            window.showExpandedInfo();
-                        } else if (typeof setExpanded === 'function') {
-                            setExpanded(true);
+                    var keyLower = keyword.toLowerCase();
+                    if (pngKeywords.indexOf(keyLower) === -1) continue;
+                    console.log('Found PNG metadata with keyword:', keyword);
+                    window.setPromptInfoAvailable(true);
+                    var textToParse = text;
+                    if (text.includes('"sampler"') && text.includes('"signed_hash"')) {
+                        var jsonStartIndex = text.indexOf('{');
+                        if (jsonStartIndex > -1) textToParse = text.substring(jsonStartIndex);
+                    }
+                    var parsed = safeJsonParse(textToParse);
+                    if (!collectedByKeyword[keyLower]) collectedByKeyword[keyLower] = [];
+                    collectedByKeyword[keyLower].push({ keyword: keyword, text: text, parsed: parsed });
+                }
+            }
+            // 2a. InvokeAI: if invokeai_metadata and/or invokeai_graph chunks exist, merge and distribute once (before ComfyUI so it takes precedence)
+            var metaEntries = null;
+            var graphEntries = null;
+            for (var kw in collectedByKeyword) {
+                var norm = kw.toLowerCase().replace(/-/g, '_').trim();
+                if (norm === 'invokeai_metadata') metaEntries = collectedByKeyword[kw];
+                if (norm === 'invokeai_graph') graphEntries = collectedByKeyword[kw];
+            }
+            if ((metaEntries && metaEntries.length > 0) || (graphEntries && graphEntries.length > 0)) {
+                var invokeMerged = {};
+                if (metaEntries && metaEntries.length > 0) {
+                    var metaEntry = metaEntries[0];
+                    invokeMerged.invokeai_metadata = (metaEntry.parsed !== undefined && metaEntry.parsed !== null && typeof metaEntry.parsed === 'object') ? metaEntry.parsed : metaEntry.text;
+                }
+                if (graphEntries && graphEntries.length > 0) {
+                    var graphEntry = graphEntries[0];
+                    invokeMerged.invokeai_graph = (graphEntry.parsed !== undefined && graphEntry.parsed !== null && typeof graphEntry.parsed === 'object') ? graphEntry.parsed : graphEntry.text;
+                }
+                var firstEntry = (metaEntries && metaEntries[0]) || graphEntries[0];
+                distributePromptData(invokeMerged, firstEntry.text, firstEntry.keyword);
+                found = true;
+            }
+            // 2a.5 NovelAI: if any chunk has Software "NovelAI" or signed_hash+sampler, use it and add Title/Source/Generation time to Image Info
+            if (!found) {
+                var novelAIEntry = null;
+                for (var nKw in collectedByKeyword) {
+                    var entries = collectedByKeyword[nKw];
+                    for (var ne = 0; ne < entries.length; ne++) {
+                        if (isNovelAI(entries[ne].parsed)) {
+                            novelAIEntry = entries[ne];
+                            break;
                         }
                     }
+                    if (novelAIEntry) break;
                 }
+                if (novelAIEntry) {
+                    distributePromptData(novelAIEntry.parsed, novelAIEntry.text, novelAIEntry.keyword);
+                    found = true;
+                    if (collectedByKeyword['title'] && collectedByKeyword['title'].length > 0) {
+                        addMetadataItem('Title', collectedByKeyword['title'][0].text, metadataList);
+                    }
+                    if (collectedByKeyword['source'] && collectedByKeyword['source'].length > 0) {
+                        addMetadataItem('Source', collectedByKeyword['source'][0].text, metadataList);
+                    }
+                    if (collectedByKeyword['generation_time'] && collectedByKeyword['generation_time'].length > 0) {
+                        addMetadataItem('Generation Time', collectedByKeyword['generation_time'][0].text, metadataList);
+                    }
+                }
+            }
+            // 2b. Midjourney: "Description" chunk with plain text only (NovelAI uses Description/Comment as JSON or Software key)
+            if (!found && collectedByKeyword['description'] && collectedByKeyword['description'].length > 0) {
+                var descEntry = collectedByKeyword['description'][0];
+                if (!isNovelAI(descEntry.parsed)) {
+                    distributePromptData(descEntry.parsed, descEntry.text, descEntry.keyword);
+                    found = true;
+                    // Add Creation Time and Author to Image Info when present
+                    if (collectedByKeyword['creation time'] && collectedByKeyword['creation time'].length > 0) {
+                        addMetadataItem('Creation Time', collectedByKeyword['creation time'][0].text, metadataList);
+                    }
+                    if (collectedByKeyword['author'] && collectedByKeyword['author'].length > 0) {
+                        addMetadataItem('Author', collectedByKeyword['author'][0].text, metadataList);
+                    }
+                }
+            }
+            // 2c. ComfyUI: "prompt" or "parameters" chunk + "workflow" chunk — merge and distribute once
+            if (!found) {
+                var promptEntries = collectedByKeyword['prompt'] || collectedByKeyword['parameters'];
+                var workflowEntries = collectedByKeyword['workflow'];
+                if (promptEntries && promptEntries.length > 0 && workflowEntries && workflowEntries.length > 0) {
+                    var promptEntry = promptEntries[0];
+                    var workflowEntry = workflowEntries[0];
+                    var promptObj = promptEntry.parsed;
+                    var workflowObj = workflowEntry.parsed;
+                    if (promptObj && typeof promptObj === 'object' && !Array.isArray(promptObj) && workflowObj !== undefined && workflowObj !== null) {
+                        var merged = { prompt: promptObj, workflow: workflowObj };
+                        distributePromptData(merged, promptEntry.text, promptEntry.keyword);
+                        found = true;
+                    }
+                }
+            }
+            if (!found) {
+                for (var kw in collectedByKeyword) {
+                    var normKw = kw.toLowerCase().replace(/-/g, '_').trim();
+                    if (normKw === 'invokeai_metadata' || normKw === 'invokeai_graph') continue;
+                    var entries = collectedByKeyword[kw];
+                    for (var e = 0; e < entries.length; e++) {
+                        distributePromptData(entries[e].parsed, entries[e].text, entries[e].keyword);
+                        found = true;
+                    }
+                }
+            }
+            if (found && (typeof window.showExpandedInfo === 'function' || typeof setExpanded === 'function')) {
+                if (typeof window.showExpandedInfo === 'function') window.showExpandedInfo();
+                else if (typeof setExpanded === 'function') setExpanded(true);
             }
             // 2. If not found, try eXIf chunk
             if (!found && chunks['eXIf'] && chunks['eXIf'].data_raw.length > 0) {
@@ -1508,8 +1711,9 @@ function collectExtraMetadataPromptOnly(obj, resultArr) {
             // Handle both string and object formats
             if (typeof obj[key] === 'string') {
                 try {
-                    // Parse the escaped JSON string
-                    const extraMetaObj = JSON.parse(obj[key]);
+                    // Sanitize: escape control chars inside string literals so JSON.parse succeeds
+                    const sanitized = escapeControlCharsInJsonString(obj[key]);
+                    const extraMetaObj = JSON.parse(sanitized);
                     if (typeof extraMetaObj.prompt === 'string') {
                         resultArr.push(extraMetaObj.prompt);
                     }
@@ -1553,41 +1757,70 @@ function safeStringifyForDisplay(obj) {
     }
 }
 var preBlockStyle = 'margin:0.5em 0;white-space:pre-wrap;font-size:0.9em;max-height:30em;overflow:auto;';
-function addJsonBlockWithLabel(label, value, listElement) {
+
+function addCollapsibleCodeBlock(label, value, listElement) {
     if (!listElement) return;
-    const jsonStr = safeStringifyForDisplay(value);
-    const escaped = jsonStr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    addMetadataItem(label, '<pre style="' + preBlockStyle + '">' + escaped + '</pre>', listElement);
+    var template = document.getElementById('metadata-code-block-template');
+    if (!template || !template.content) {
+        return;
+    }
+    var jsonStr = safeStringifyForDisplay(value);
+    var li = template.content.cloneNode(true);
+    var labelTextEl = li.querySelector('.metadata-code-block-label-text');
+    var toggle = li.querySelector('.metadata-code-block-toggle');
+    var preEl = li.querySelector('.metadata-code-block-content pre');
+    if (labelTextEl) labelTextEl.textContent = label;
+    if (preEl) {
+        preEl.setAttribute('style', preBlockStyle);
+        preEl.textContent = jsonStr;
+    }
+    toggle.addEventListener('click', function (e) {
+        var row = e.currentTarget;
+        var contentBlock = row.nextElementSibling;
+        var chevronEl = row.querySelector('.metadata-code-block-label .chevron');
+        if (contentBlock) contentBlock.classList.toggle('collapsed');
+        var isNowCollapsed = contentBlock && contentBlock.classList.contains('collapsed');
+        if (chevronEl) chevronEl.classList.toggle('rotate', !isNowCollapsed);
+        row.setAttribute('aria-expanded', !isNowCollapsed ? 'true' : 'false');
+    });
+    toggle.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            toggle.click();
+            e.preventDefault();
+        }
+    });
+    listElement.appendChild(li);
+}
+
+function addJsonBlockWithLabel(label, value, listElement) {
+    addCollapsibleCodeBlock(label, value, listElement);
 }
 // --- Helper: Get object property by key (case-insensitive) ---
 function getValueIgnoreCase(obj, key) {
     if (!obj || typeof obj !== 'object') return undefined;
-    const k = (key || '').toString().toLowerCase();
-    for (const name in obj) {
+    var k = (key || '').toString().toLowerCase();
+    for (var name in obj) {
         if (Object.prototype.hasOwnProperty.call(obj, name) && name.toLowerCase() === k) return obj[name];
     }
     return undefined;
 }
-// --- Helper: Add metadata as JSON code block(s). If both Prompt and Workflow exist, show a separate block for each. ---
-function addMetadataAsJsonBlock(parsed, listElement, sourceLabel) {
+
+// --- Additional Info: one code block per format field present ---
+function addMetadataAsJsonBlock(parsed, listElement, formatName, sourceLabel) {
     if (!listElement || !parsed) return;
-    const promptVal = getValueIgnoreCase(parsed, 'prompt');
-    let workflowVal = getValueIgnoreCase(parsed, 'workflow');
-    if (workflowVal === undefined || workflowVal === null) {
-        const workflowKey = Object.keys(parsed).find(function (k) { return /workflow/.test((k || '').toLowerCase()); });
-        if (workflowKey) workflowVal = parsed[workflowKey];
+    var fieldNames = formatName ? getFormatFieldNames(formatName) : [];
+    var added = 0;
+    if (fieldNames.length > 0 && typeof parsed === 'object' && !Array.isArray(parsed) && parsed !== null) {
+        for (var i = 0; i < fieldNames.length; i++) {
+            var val = getValueIgnoreCase(parsed, fieldNames[i]);
+            if (val !== undefined && val !== null) {
+                addJsonBlockWithLabel(formatFieldDisplayLabel(fieldNames[i]), val, listElement);
+                added++;
+            }
+        }
     }
-    const hasPrompt = promptVal !== undefined && promptVal !== null;
-    const hasWorkflow = workflowVal !== undefined && workflowVal !== null;
-    if (hasPrompt && hasWorkflow) {
-        addJsonBlockWithLabel('Prompt', promptVal, listElement);
-        addJsonBlockWithLabel('Workflow', workflowVal, listElement);
-    } else if (hasWorkflow && !hasPrompt) {
-        addJsonBlockWithLabel('Workflow', workflowVal, listElement);
-    } else {
-        const jsonStr = safeStringifyForDisplay(parsed);
-        const escaped = jsonStr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        addMetadataItem(sourceLabel || 'Metadata', '<pre style="' + preBlockStyle + '">' + escaped + '</pre>', listElement);
+    if (added === 0) {
+        addCollapsibleCodeBlock(sourceLabel || 'Metadata', parsed, listElement);
     }
 }
 
@@ -1798,21 +2031,27 @@ function parseAndDisplayUserComment(comment) {
 }
 
 /**
- * Split the additional prompt info into items, respecting commas inside parentheses/brackets/braces.
+ * Split the additional prompt info into items, respecting commas inside parentheses/brackets/braces and double-quoted strings.
  */
 function splitPromptInfo(str) {
     const result = [];
     let current = '';
     let parenDepth = 0, bracketDepth = 0, braceDepth = 0;
+    let inDoubleQuote = false;
     for (let i = 0; i < str.length; ++i) {
         const c = str[i];
-        if (c === '(') parenDepth++;
-        if (c === ')') parenDepth--;
-        if (c === '[') bracketDepth++;
-        if (c === ']') bracketDepth--;
-        if (c === '{') braceDepth++;
-        if (c === '}') braceDepth--;
-        if (c === ',' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+        if (c === '"') {
+            inDoubleQuote = !inDoubleQuote;
+            current += c;
+            continue;
+        }
+        if (c === '(' && !inDoubleQuote) parenDepth++;
+        if (c === ')' && !inDoubleQuote) parenDepth--;
+        if (c === '[' && !inDoubleQuote) bracketDepth++;
+        if (c === ']' && !inDoubleQuote) bracketDepth--;
+        if (c === '{' && !inDoubleQuote) braceDepth++;
+        if (c === '}' && !inDoubleQuote) braceDepth--;
+        if (c === ',' && !inDoubleQuote && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
             result.push(current);
             current = '';
             // Skip the space after comma if present
@@ -1825,25 +2064,227 @@ function splitPromptInfo(str) {
     return result;
 }
 
-/**
- * Add a metadata item to a given list element, formatting with <strong> for label.
- * If no list element is provided, defaults to metadataList.
- */
-function addMetadataItem(label, value, listElement) {
-    const li = document.createElement('li');
-    if (label) {
-        li.innerHTML = `<strong class="unselectable-label">${label}:</strong> ${value}`;
-    } else {
-        li.textContent = value;
+// --- Civitai: resolve hash to model page URL (GET /api/v1/model-versions/by-hash/:hash) ---
+var CIVITAI_API_BASE = 'https://civitai.com/api/v1';
+function fetchCivitaiModelByHash(hash, callback) {
+    if (!hash || typeof hash !== 'string') {
+        callback(new Error('Invalid hash'));
+        return;
     }
-    (listElement || metadataList).appendChild(li);
+    hash = hash.trim();
+    if (!hash) {
+        callback(new Error('Empty hash'));
+        return;
+    }
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', CIVITAI_API_BASE + '/model-versions/by-hash/' + encodeURIComponent(hash), true);
+    xhr.onload = function () {
+        if (xhr.status !== 200) {
+            callback(new Error('Civitai API returned ' + xhr.status));
+            return;
+        }
+        try {
+            var data = JSON.parse(xhr.responseText);
+            var modelId = data.modelId || (data.model && data.model.id);
+            var modelVersionId = data.id;
+            if (modelId != null && modelVersionId != null) {
+                callback(null, { modelId: modelId, modelVersionId: modelVersionId });
+            } else {
+                callback(new Error('Missing modelId or version id'));
+            }
+        } catch (e) {
+            callback(e);
+        }
+    };
+    xhr.onerror = function () { callback(new Error('Network error')); };
+    xhr.send();
+}
+
+function escapeHtml(str) {
+    if (str == null) return '';
+    var div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
+/** Strip surrounding double quotes and trim. */
+function stripQuotes(s) {
+    if (s == null) return '';
+    s = String(s).trim();
+    if (s.length >= 2 && s.charAt(0) === '"' && s.charAt(s.length - 1) === '"') {
+        s = s.slice(1, -1).trim();
+    }
+    return s;
+}
+
+/** Parse "Model hash" / "Lora hashes" value into list of { name, hash } for linkification. */
+function parseHashesForCivitai(label, value) {
+    var out = [];
+    if (value == null) return out;
+    var str = typeof value === 'string' ? value.trim() : (typeof value === 'object' ? JSON.stringify(value) : String(value));
+    str = stripQuotes(str);
+    if (!str) return out;
+    // JSON object like {"lora1":"hash1","lora2":"hash2"}
+    if (str.startsWith('{')) {
+        try {
+            var obj = JSON.parse(str);
+            for (var k in obj) { if (Object.prototype.hasOwnProperty.call(obj, k)) { out.push({ name: stripQuotes(k), hash: stripQuotes(String(obj[k])) }); } }
+            return out;
+        } catch (e) { /* fall through */ }
+    }
+    // "name: hash" or "name1: hash1, name2: hash2"
+    var parts = str.split(',').map(function (p) { return p.trim(); });
+    parts.forEach(function (part) {
+        part = stripQuotes(part);
+        var colon = part.indexOf(':');
+        if (colon !== -1) {
+            var name = stripQuotes(part.slice(0, colon).trim());
+            var hash = stripQuotes(part.slice(colon + 1).trim());
+            if (hash) out.push({ name: name, hash: hash });
+        } else if (/^[a-zA-Z0-9]{6,64}$/i.test(part)) {
+            out.push({ name: '', hash: part });
+        }
+    });
+    // Single hash only (e.g. Model hash)
+    if (out.length === 0 && /^[a-zA-Z0-9]{6,64}$/i.test(str)) {
+        out.push({ name: '', hash: str });
+    }
+    return out;
+}
+
+/** Normalize model-related keys to consistent display labels for the Models section. */
+function normalizeModelLabel(key) {
+    if (!key || typeof key !== 'string') return key;
+    var k = key.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (/^ckpt_name$|^checkpoint$|^model$|^ckpt$|^modelname$|^model_name$/.test(k)) return 'Model';
+    if (/^base_ckpt_name$|^base model$/.test(k)) return 'Base model';
+    if (/^model_hash$|^ckpt_hash$|^hash$/.test(k)) return 'Model hash';
+    if (k === 'lora' || k === 'lora_name') return 'Lora';
+    if (/^lora hashes$|^lorahashes$/.test(k.replace(/\s/g, ''))) return 'Lora hashes';
+    if (/^lora[_\-]?\d*$/.test(k)) {
+        var num = k.replace(/^lora[_\-]?/, '');
+        return num ? 'Lora ' + num : 'Lora';
+    }
+    return key.replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); });
+}
+
+/** Add a model info row with normalized label to model-info-list. Linkifies Model hash and Lora hashes to Civitai. */
+function addModelInfoItem(key, value) {
+    if (!modelInfoList) return;
+    var label = normalizeModelLabel(key);
+    if (label === 'Model hash' || label === 'Lora hashes') {
+        var entries = parseHashesForCivitai(label, value);
+        if (entries.length === 0) {
+            addMetadataItem(label, value, modelInfoList);
+            return;
+        }
+        var li = document.createElement('li');
+        li.innerHTML = '<strong class="unselectable-label">' + escapeHtml(label) + ':</strong> ';
+        var valueContainer = document.createElement('span');
+        valueContainer.className = 'civitai-hash-links';
+        if (entries.length === 1) {
+            var span = document.createElement('span');
+            span.textContent = entries[0].name ? entries[0].name + ': ' + entries[0].hash : entries[0].hash;
+            span.setAttribute('data-hash', entries[0].hash);
+            valueContainer.appendChild(span);
+            resolveCivitaiHashSpan(span, entries[0].hash, entries[0].name);
+        } else {
+            var ul = document.createElement('ul');
+            ul.style.cssText = 'margin:0 0 0 1em;padding:0;list-style:none;';
+            entries.forEach(function (entry) {
+                var itemLi = document.createElement('li');
+                var span = document.createElement('span');
+                span.textContent = entry.name ? entry.name + ': ' + entry.hash : entry.hash;
+                span.setAttribute('data-hash', entry.hash);
+                itemLi.appendChild(span);
+                ul.appendChild(itemLi);
+                resolveCivitaiHashSpan(span, entry.hash, entry.name);
+            });
+            valueContainer.appendChild(ul);
+        }
+        li.appendChild(valueContainer);
+        modelInfoList.appendChild(li);
+        return;
+    }
+    addMetadataItem(label, value, modelInfoList);
+}
+
+function resolveCivitaiHashSpan(span, hash, name) {
+    fetchCivitaiModelByHash(hash, function (err, result) {
+        if (err || !result) {
+            return;
+        }
+        var url = 'https://civitai.com/models/' + result.modelId + '?modelVersionId=' + result.modelVersionId;
+        var display = name ? name + ': ' + hash : hash;
+        var a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = display;
+        span.textContent = '';
+        span.appendChild(a);
+    });
 }
 
 /**
- * Show the detected generation metadata type in Image Info
+ * Add a metadata item to a given list element, formatting with <strong> for label.
+ * If no list element is provided, defaults to metadataList.
+ * When listElement is modelInfoList and label is "Model hash" or "Lora hashes", value is linkified to Civitai.
  */
+function addMetadataItem(label, value, listElement) {
+    var targetList = listElement || metadataList;
+    if (targetList === modelInfoList && (label === 'Model hash' || label === 'Lora hashes')) {
+        var entries = parseHashesForCivitai(label, value);
+        if (entries.length > 0) {
+            var li = document.createElement('li');
+            li.innerHTML = '<strong class="unselectable-label">' + escapeHtml(label) + ':</strong> ';
+            var valueContainer = document.createElement('span');
+            valueContainer.className = 'civitai-hash-links';
+            if (entries.length === 1) {
+                var span = document.createElement('span');
+                span.textContent = entries[0].name ? entries[0].name + ': ' + entries[0].hash : entries[0].hash;
+                span.setAttribute('data-hash', entries[0].hash);
+                valueContainer.appendChild(span);
+                resolveCivitaiHashSpan(span, entries[0].hash, entries[0].name);
+            } else {
+                var ul = document.createElement('ul');
+                ul.style.cssText = 'margin:0 0 0 1em;padding:0;list-style:none;';
+                entries.forEach(function (entry) {
+                    var itemLi = document.createElement('li');
+                    var span = document.createElement('span');
+                    span.textContent = entry.name ? entry.name + ': ' + entry.hash : entry.hash;
+                    span.setAttribute('data-hash', entry.hash);
+                    itemLi.appendChild(span);
+                    ul.appendChild(itemLi);
+                    resolveCivitaiHashSpan(span, entry.hash, entry.name);
+                });
+                valueContainer.appendChild(ul);
+            }
+            li.appendChild(valueContainer);
+            targetList.appendChild(li);
+            return;
+        }
+    }
+    var li = document.createElement('li');
+    if (label) {
+        li.innerHTML = '<strong class="unselectable-label">' + escapeHtml(label) + ':</strong> ' + escapeHtml(value);
+    } else {
+        li.textContent = value;
+    }
+    targetList.appendChild(li);
+}
+
+// Show the detected generation metadata type in Image Info
 function setGenerationMetadataType(type) {
     if (!metadataList || !type) return;
+    var children = metadataList.children;
+    for (var i = children.length - 1; i >= 0; i--) {
+        var li = children[i];
+        if (li.querySelector && li.querySelector('strong') && li.querySelector('strong').textContent === 'Metadata type:') {
+            metadataList.removeChild(li);
+            break;
+        }
+    }
     addMetadataItem('Metadata type', type);
 }
 
