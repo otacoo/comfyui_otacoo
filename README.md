@@ -1,7 +1,7 @@
 # Metadata-Extractor ✨
 Extract generation info from images, works for A1111/Forge, NovelAI, InvokeAI and (most) ComfyUI types of metadata.
 
-Can be used as [standalone](https://github.com/otacoo/comfyui_otacoo/releases/latest) or installed as ComfyUI custom_node, which will add a button to the menu bar.
+Can be used as [standalone](https://github.com/otacoo/comfyui_metadata_extract/releases/latest) or installed as ComfyUI custom_node, which will add a button to the menu bar.
 
 
 ### Support:
@@ -16,7 +16,7 @@ Can be used as [standalone](https://github.com/otacoo/comfyui_otacoo/releases/la
 
 Go into your ComfyUI `custom_nodes` folder, open a terminal and do:
 ```
-git clone https://github.com/otacoo/comfyui_otacoo.git
+git clone https://github.com/otacoo/comfyui_metadata_extract.git
 ```
 
 ![button](https://github.com/user-attachments/assets/77ed794d-cd70-4dd0-8ba3-a43e712ad584)
