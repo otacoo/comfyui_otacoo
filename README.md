@@ -4,11 +4,14 @@ Extract generation info from images, works for A1111/Forge, NovelAI, InvokeAI, M
 Can be used as a [standalone](https://github.com/otacoo/comfyui_metadata_extract/releases/latest) web page or installed as ComfyUI custom_node, which will add a button to the menu bar.
 
 
-### Support:
+### Features:
 - Supports PNG, JPEG and WEBP images
 - Supports hidden metadata, Alpha, RGB, EXIF UserComment, Make, JSON and JSON-like strings
+- Fetch and linkify Civitai models
+- Strip metadata
+- Light / dark theme
 
-![Screenshot Metadata Extractor](https://github.com/user-attachments/assets/13984a8a-c5b9-4fd3-84b8-61f83463677d)
+![Screenshot Metadata Extractor](https://github.com/user-attachments/assets/ea50f1d9-48dd-48d1-8be9-32520164b4cf)
 
 
 ### Manual Install
