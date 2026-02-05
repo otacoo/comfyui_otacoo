@@ -267,6 +267,16 @@ h2 {
     color: var(--secondary-text);
 }
 
+.civitai-hash-links a {
+    color: #ffffff;
+    text-decoration: underline;
+    font-weight: bold;
+}
+
+body.light-mode .civitai-hash-links a {
+    color: var(--text-color);
+}
+
 .expand-toggle-row {
     display: flex;
     align-items: center;
