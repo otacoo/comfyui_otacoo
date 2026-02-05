@@ -42,7 +42,7 @@ function isModelInfoKey(key, value) {
     }
     const normalized = key.trim().toLowerCase();
     const modelKeys = [
-        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelname', 'lora', 'lora_name', 'lora hashes'
+        'ckpt', 'ckpt_name', 'checkpoint', 'modelname', 'lora', 'lora_name', 'lora hashes'
     ];
     return (
         modelKeys.includes(normalized) ||
