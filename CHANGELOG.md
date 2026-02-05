@@ -1,3 +1,19 @@
+## v1.2.0
+*2026-02-05*
+
+- Add support for Civitai resources when available & matching Civitai ID:
+    - Linkification
+    - Title fetching
+    - Button to toggle feature (top right)
+- Add support for Midjourney metadata
+- Greatly improved parsing of the various types of metadata
+- Better identification of metadata type
+- JSON and JSON-like metadata will be shown in code blocks
+- Better parsing of positive/negative prompts
+- Improve NovelAI and InvokeAI metadata parsing
+- Remove unused or useless code ("EXIF metadata found" thingy)
+- Fix path for files after Github repo rename
+
 ## v1.1.1
 *2026-01-30*
 
