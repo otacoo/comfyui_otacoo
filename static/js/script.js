@@ -311,7 +311,7 @@ function distributePromptData(parsed, comment, sourceTag) {
             clearWarning();
             found = true;
         } else {
-            // --- Generic JSON Handler ---
+            // --- ComfyUI (generic JSON handler) ---
             // 1. Collect all "text" values (recursively) for positive and negative prompts
             const positiveTexts = [];
             const negativeTexts = [];
@@ -366,7 +366,7 @@ function distributePromptData(parsed, comment, sourceTag) {
                 // Only add if not already present (avoid duplicates)
                 addMetadataItem(k, v, modelInfoList);
             });
-            setGenerationMetadataType('Generic');
+            setGenerationMetadataType('ComfyUI');
             clearWarning();
             found = true;
         }
@@ -1025,11 +1025,11 @@ function extractExifMetadata(file) {
             const length = view.byteLength;
             while (offset < length) {
                 if (view.getUint16(offset + 2, false) === 0x4578) {
-                    addMetadataItem('EXIF', 'EXIF data present (no generation metadata)');
+                    addMetadataItem('EXIF', 'EXIF data present');
                     return;
                 }
                 if (view.getUint16(offset, false) === 0xFFE1) {
-                    addMetadataItem('EXIF', 'EXIF segment found (no generation metadata)');
+                    addMetadataItem('EXIF', 'EXIF segment found');
                     return;
                 }
                 offset += 2;
@@ -1037,7 +1037,7 @@ function extractExifMetadata(file) {
             addMetadataItem('EXIF', 'No EXIF data found');
         } else if (file.type === 'image/webp') {
             // WebP EXIF is rare, just note presence
-            addMetadataItem('EXIF', 'EXIF metadata found (no generation metadata)');
+            addMetadataItem('EXIF', 'EXIF metadata found');
         }
     };
     reader.readAsArrayBuffer(file);
@@ -1826,14 +1826,6 @@ function addMetadataItem(label, value, listElement) {
  */
 function setGenerationMetadataType(type) {
     if (!metadataList || !type) return;
-    const noGen = ' (no generation metadata)';
-    const items = metadataList.querySelectorAll('li');
-    for (let i = 0; i < items.length; i++) {
-        const li = items[i];
-        if (li.innerHTML && li.innerHTML.indexOf(noGen) !== -1) {
-            li.innerHTML = li.innerHTML.replace(noGen, '');
-        }
-    }
     addMetadataItem('Metadata type', type);
 }
 
