@@ -125,8 +125,24 @@
                 </svg>
             </div>
             <ul class="prompt-info-list collapsed" id="prompt-info-list">
-                <!-- Metadata will be displayed here -->
+                <!-- Code blocks and other additional info appended here by script -->
             </ul>
+            <template id="metadata-code-block-template">
+                <li class="metadata-code-block">
+                    <div class="expand-toggle-row metadata-code-block-toggle" tabindex="0" role="button" aria-expanded="false">
+                        <span class="expand-toggle-text metadata-code-block-label">
+                            <span class="metadata-code-block-label-text"></span>
+                            <svg class="chevron chevron-left" width="24" height="24" viewBox="0 0 24 24">
+                                <polyline points="10 8 14 12 10 16" fill="none" stroke="#888" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="metadata-code-block-content collapsed">
+                        <pre></pre>
+                    </div>
+                </li>
+            </template>
         </div>
     </div>
     <footer class="footer">

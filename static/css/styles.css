@@ -271,7 +271,6 @@ h2 {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: .5em 0 .5em 0;
     user-select: none;
     cursor: pointer;
     gap: .5em;
@@ -310,6 +309,42 @@ h2 {
 
 .chevron-right.rotate {
     transform: rotate(-90deg);
+}
+
+.metadata-code-block .chevron-right.rotate {
+    transform: rotate(90deg);
+}
+
+.metadata-code-block {
+    list-style: none;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.metadata-code-block .expand-toggle-row {
+    justify-content: flex-start;
+    padding: 0.4em 0.5em;
+}
+
+.metadata-code-block-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.metadata-code-block-content {
+    overflow: hidden;
+    border-top: 1px solid var(--border-color, #444);
+    padding: 0 0.5em 0.5em;
+}
+
+.metadata-code-block-content pre {
+    margin: 0;
+}
+
+.metadata-code-block-content.collapsed {
+    display: none;
 }
 
 /* Footer styles */
