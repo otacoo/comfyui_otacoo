@@ -56,6 +56,10 @@ body {
     scrollbar-width: thin;
 }
 
+.additional-container {
+    position: relative;
+}
+
 /* Theme toggle button */
 .theme-toggle-container {
     position: absolute;
@@ -85,6 +89,50 @@ body {
 .theme-icon {
     width: 24px;
     height: 24px;
+}
+
+/* Civitai toggle button (top right of Models panel) */
+.civitai-toggle-container {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+}
+
+.civitai-toggle-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-color);
+    padding: 5px;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.3s;
+}
+
+.civitai-toggle-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+body.light-mode .civitai-toggle-btn:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.civitai-toggle-btn .civitai-icon {
+    width: 24px;
+    height: 24px;
+}
+
+.civitai-toggle-btn[aria-pressed="false"] .civitai-icon-on {
+    display: none;
+}
+
+.civitai-toggle-btn[aria-pressed="false"] .civitai-icon-off {
+    display: block !important;
+    opacity: 0.6;
 }
 
 /* Copy buttons */

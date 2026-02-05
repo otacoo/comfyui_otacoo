@@ -14,7 +14,7 @@
         <!-- Left: Image Metadata Extractor -->
         <div class="container">
             <div class="theme-toggle-container">
-                <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle dark/light mode">
+                <button title="Toggle dark/light mode" id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle dark/light mode">
                     <svg class="theme-icon sun-icon" width="24" height="24" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="5"></circle>
@@ -104,6 +104,20 @@
             </div>
         </div>
         <div class="additional-container">
+            <div class="civitai-toggle-container">
+                <button type="button" id="civitai-toggle" class="civitai-toggle-btn" aria-label="Toggle Civitai model lookup"
+                    title="Toggle Civitai model lookup: fetch model names and linkify.">
+                    <svg class="civitai-icon civitai-icon-on" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                    </svg>
+                    <svg class="civitai-icon civitai-icon-off" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                        <line x1="2" y1="2" x2="22" y2="22"></line>
+                    </svg>
+                </button>
+            </div>
             <h1>Models:</h1>
             <span id="warning"></span>
             <ul class="model-info-list" id="model-info-list">
