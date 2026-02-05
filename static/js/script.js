@@ -42,7 +42,7 @@ function isModelInfoKey(key, value) {
     }
     const normalized = key.trim().toLowerCase();
     const modelKeys = [
-        'ckpt', 'ckpt_name', 'checkpoint', 'modelname', 'lora', 'lora_name', 'lora hashes'
+        'ckpt', 'ckpt_name', 'checkpoint', 'model', 'modelname', 'lora', 'lora_name', 'lora hashes'
     ];
     return (
         modelKeys.includes(normalized) ||
@@ -203,11 +203,7 @@ function distributePromptData(parsed, comment, sourceTag) {
                 if (promptInfoList) promptInfoList.innerHTML = '';
                 if (modelInfoList) modelInfoList.innerHTML = '';
                 if (comfy.extra) addMetadataItem('Parameters', comfy.extra, promptInfoList);
-                collectPromptInfo(parsed, function (key, value) {
-                    if (!isModelInfoKey(key, value)) addMetadataItem(key, value, promptInfoList);
-                }, function (key, value) {
-                    if (isModelInfoKey(key, value)) addMetadataItem(key, value, modelInfoList);
-                });
+                addMetadataAsJsonBlock(parsed, promptInfoList, sourceTag);
                 walkForModelInfo(parsed, function (k, v) { addMetadataItem(k, v, modelInfoList); });
                 setGenerationMetadataType('ComfyUI');
                 clearWarning();
@@ -290,22 +286,7 @@ function distributePromptData(parsed, comment, sourceTag) {
             if (promptInfoList) promptInfoList.innerHTML = '';
             if (modelInfoList) modelInfoList.innerHTML = '';
 
-            const infoData = { ...parsed };
-            delete infoData.positive_prompt;
-            delete infoData.negative_prompt;
-            delete infoData.value;
-            delete infoData.Value;
-
-            collectPromptInfo(
-                infoData,
-                (key, value) => {
-                    if (!isModelInfoKey(key, value)) { addMetadataItem(key, value, promptInfoList); }
-                },
-                (key, value) => {
-                    if (isModelInfoKey(key, value)) { addMetadataItem(key, value, modelInfoList); }
-                }
-            );
-
+            addMetadataAsJsonBlock(parsed, promptInfoList, sourceTag);
             walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
             setGenerationMetadataType('InvokeAI');
             clearWarning();
@@ -344,28 +325,11 @@ function distributePromptData(parsed, comment, sourceTag) {
                 setAndResize(additionalPromptsTextarea, combined.join('\n'));
             }
 
-            // 3. Collect allowed keys for prompt-info-list and model-info-list
+            // 3. Additional Info as JSON block; Models list from model keys only
             if (promptInfoList) promptInfoList.innerHTML = '';
             if (modelInfoList) modelInfoList.innerHTML = '';
-            // Add all prompt info as before
-            collectPromptInfo(
-                parsed,
-                (key, value) => {
-                    if (!isModelInfoKey(key, value)) {
-                        addMetadataItem(key, value, promptInfoList);
-                    }
-                },
-                (key, value) => {
-                    if (isModelInfoKey(key, value)) {
-                        addMetadataItem(key, value, modelInfoList);
-                    }
-                }
-            );
-            // Walk further for nested model info keys (e.g. modelName/modelVersionName in Civitai arrays/objects)
-            walkForModelInfo(parsed, (k, v) => {
-                // Only add if not already present (avoid duplicates)
-                addMetadataItem(k, v, modelInfoList);
-            });
+            addMetadataAsJsonBlock(parsed, promptInfoList, sourceTag);
+            walkForModelInfo(parsed, (k, v) => addMetadataItem(k, v, modelInfoList));
             setGenerationMetadataType('ComfyUI');
             clearWarning();
             found = true;
@@ -1570,6 +1534,60 @@ function collectExtraMetadataPromptOnly(obj, resultArr) {
         } else if (typeof obj[key] === 'object') {
             collectExtraMetadataPromptOnly(obj[key], resultArr);
         }
+    }
+}
+
+// --- Helper: Pretty-print as JSON for display ---
+function safeStringifyForDisplay(obj) {
+    const seen = new WeakSet();
+    try {
+        return JSON.stringify(obj, function (key, value) {
+            if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) return '[Circular]';
+                seen.add(value);
+            }
+            return value;
+        }, 2);
+    } catch (e) {
+        return String(obj);
+    }
+}
+var preBlockStyle = 'margin:0.5em 0;white-space:pre-wrap;font-size:0.9em;max-height:30em;overflow:auto;';
+function addJsonBlockWithLabel(label, value, listElement) {
+    if (!listElement) return;
+    const jsonStr = safeStringifyForDisplay(value);
+    const escaped = jsonStr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    addMetadataItem(label, '<pre style="' + preBlockStyle + '">' + escaped + '</pre>', listElement);
+}
+// --- Helper: Get object property by key (case-insensitive) ---
+function getValueIgnoreCase(obj, key) {
+    if (!obj || typeof obj !== 'object') return undefined;
+    const k = (key || '').toString().toLowerCase();
+    for (const name in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, name) && name.toLowerCase() === k) return obj[name];
+    }
+    return undefined;
+}
+// --- Helper: Add metadata as JSON code block(s). If both Prompt and Workflow exist, show a separate block for each. ---
+function addMetadataAsJsonBlock(parsed, listElement, sourceLabel) {
+    if (!listElement || !parsed) return;
+    const promptVal = getValueIgnoreCase(parsed, 'prompt');
+    let workflowVal = getValueIgnoreCase(parsed, 'workflow');
+    if (workflowVal === undefined || workflowVal === null) {
+        const workflowKey = Object.keys(parsed).find(function (k) { return /workflow/.test((k || '').toLowerCase()); });
+        if (workflowKey) workflowVal = parsed[workflowKey];
+    }
+    const hasPrompt = promptVal !== undefined && promptVal !== null;
+    const hasWorkflow = workflowVal !== undefined && workflowVal !== null;
+    if (hasPrompt && hasWorkflow) {
+        addJsonBlockWithLabel('Prompt', promptVal, listElement);
+        addJsonBlockWithLabel('Workflow', workflowVal, listElement);
+    } else if (hasWorkflow && !hasPrompt) {
+        addJsonBlockWithLabel('Workflow', workflowVal, listElement);
+    } else {
+        const jsonStr = safeStringifyForDisplay(parsed);
+        const escaped = jsonStr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        addMetadataItem(sourceLabel || 'Metadata', '<pre style="' + preBlockStyle + '">' + escaped + '</pre>', listElement);
     }
 }
 
