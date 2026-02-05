@@ -1,5 +1,5 @@
 /**
- * script.js with Exif reader, PNG, JPEG and WebP integration for metadata extraction.
+ * script.js with Exif reader for PNG, JPEG and WebP, with Civitai integration for metadata extraction.
  * (c) otacoo / otakudude / doublerunes, GPLv3
  */
 
@@ -14,7 +14,10 @@ const promptInfoList = document.getElementById('prompt-info-list');
 const modelInfoList = document.getElementById('model-info-list');
 const warningSpan = document.getElementById('warning');
 
-// --- Decode byte array as UTF-8 (with Latin-1 fallback for old runtimes) ---
+// When false, skip Civitai API lookups
+var civitaiCheckingEnabled = true;
+
+// --- Decode byte array as UTF-8 (Latin-1 fallback) ---
 function decodeBytesToUtf8String(bytes) {
     if (!bytes || !bytes.length) return '';
     try {
@@ -29,9 +32,32 @@ function decodeBytesToUtf8String(bytes) {
 
 // --- PNG keywords to look for in tEXt/zTXt/iTXt chunks ---
 function getPngKeywordsFromFormats() {
-    return ['parameters', 'davant__batch_parameters', 'description', 'creation time', 'author', 'usercomment', 'creatortool', 'fooocus_scheme', 'invokeai_metadata', 'invokeai_graph', 'comment', 'title', 'software', 'source', 'result', 'prompt', 'workflow', 'generation_data', 'generation_time', 'camera_manufacturer', 'image_description'];
+    return [
+        'parameters', 
+        'davant__batch_parameters', 
+        'description', 
+        'creation time', 
+        'author', 
+        'usercomment', 
+        'creatortool', 
+        'fooocus_scheme', 
+        'invokeai_metadata', 
+        'invokeai_graph', 
+        'comment', 
+        'title', 
+        'software', 
+        'source', 
+        'result', 
+        'prompt', 
+        'workflow', 
+        'generation_data', 
+        'generation_time', 
+        'camera_manufacturer', 
+        'image_description'
+    ];
 }
 
+// --- Get format field names ---
 function getFormatFieldNames(formatName) {
     var map = {
         CivitAI: ['parameters'],
@@ -42,6 +68,7 @@ function getFormatFieldNames(formatName) {
     return map[formatName] || [];
 }
 
+// --- Format field display label ---
 function formatFieldDisplayLabel(fieldKey) {
     var known = { prompt: 'Prompt', workflow: 'Workflow', generation_data: 'Generation data', invokeai_graph: 'InvokeAI graph', invokeai_metadata: 'InvokeAI metadata', parameters: 'Parameters', user_comment: 'User comment', comment: 'Comment', description: 'Description', title: 'Title', software: 'Software', source: 'Source', fooocus_scheme: 'Fooocus scheme', davant__batch_parameters: 'DAVANT batch parameters', creatortool: 'Creator tool', camera_manufacturer: 'Camera manufacturer', image_description: 'Image description' };
     var lower = (fieldKey || '').toString().toLowerCase();
@@ -62,8 +89,7 @@ function stripPromptPrefix(str) {
     return str.replace(/^(Prompt:|Workflow:)/, '').trim();
 }
 
-// --- Helper: Determine if a key should go to model-info-list ---
-// Only essential model identity: lora name, hashes, model name/hash, vae name/hash. Skip ComfyUI noise.
+// --- Helper: Determine if a key should go to model-info-list, skip ComfyUI noise ---
 function isModelInfoKey(key, value) {
     if (!key) return false;
     // Skip if value is missing, empty, or 'none'
@@ -97,7 +123,7 @@ function isModelInfoKey(key, value) {
         /^model[_]?name$/.test(normalized) ||
         /^vae[_]?name$/.test(normalized) ||
         /^vae[_]?hash$/.test(normalized) ||
-        // lora_name or lora-name (but not lora_wt, lora_count, etc. — already excluded above)
+        // lora_name or lora-name (but not lora_wt, lora_count, etc.)
         /^lora[_\-]name$/i.test(normalized)
     );
 }
@@ -121,6 +147,17 @@ function extractCivitAIMetadata(parsed) {
     } catch (e) {
         return null;
     }
+}
+
+// --- ComfyUI: true if parsed has generation_data or a prompt graph (nodes with class_type) ---
+function isComfyUIGraph(parsed) {
+    if (!parsed || typeof parsed !== 'object') return false;
+    if (parsed.generation_data) return true;
+    var p = parsed.prompt;
+    return !!(p && typeof p === 'object' && Object.keys(p).some(function (k) {
+        var n = p[k];
+        return n && typeof n === 'object' && n.class_type;
+    }));
 }
 
 // --- ComfyUI: prompt graph (class_type nodes) or generation_data ---
@@ -175,7 +212,7 @@ function extractComfyUIMetadata(parsed) {
             }
         }
         const p = parsed.prompt;
-        if (p && typeof p === 'object' && !Array.isArray(p)) {
+        if (p && typeof p === 'object') {
             const hasClassType = Object.keys(p).some(function (k) {
                 const n = p[k];
                 return n && typeof n === 'object' && n.class_type;
@@ -211,17 +248,20 @@ function extractComfyUIMetadata(parsed) {
     return null;
 }
 
+// --- InvokeAI: keyword "invokeai_metadata" or "invokeai_graph" ---
 function isInvokeAIKeyword(tag) {
     if (tag == null || typeof tag !== 'string') return false;
     var n = tag.toLowerCase().replace(/-/g, '_').trim();
     return n === 'invokeai_metadata' || n === 'invokeai_graph';
 }
 
+// --- Midjourney: keyword "Description" with plain text only ---
 function isMidjourneyKeyword(tag) {
     if (tag == null || typeof tag !== 'string') return false;
     return tag.trim().toLowerCase() === 'description';
 }
 
+// --- NovelAI: signed_hash+sampler or Software contains "NovelAI" ---
 function isNovelAIMetadata(parsed) {
     return parsed && typeof parsed === 'object' && parsed.hasOwnProperty('signed_hash') && parsed.hasOwnProperty('sampler');
 }
@@ -239,7 +279,8 @@ function isNovelAI(parsed) {
 // --- Centralized prompt data distribution ---
 function distributePromptData(parsed, comment, sourceTag) {
     let found = false;
-    // Midjourney: keyword "Description" with plain text only. NovelAI uses Description/Comment as JSON or has Software: "NovelAI".
+    // Midjourney: keyword "Description" with plain text. 
+    // NovelAI uses Description/Comment as JSON or has Software: "NovelAI".
     if (isMidjourneyKeyword(sourceTag) && !isNovelAI(parsed)) {
         var descText = (comment && typeof comment === 'string') ? comment : (parsed && typeof parsed === 'string') ? parsed : '';
         setAndResize(positivePrompt, unescapePromptString(descText));
@@ -257,22 +298,22 @@ function distributePromptData(parsed, comment, sourceTag) {
         found = true;
     }
     if (!found && parsed && typeof parsed === 'object') {
-        // --- ComfyUI ---
-        if (!found && (parsed.generation_data || (parsed.prompt && typeof parsed.prompt === 'object' && Object.keys(parsed.prompt).some(function (k) {
-            const n = parsed.prompt[k];
-            return n && typeof n === 'object' && n.class_type;
-        })))) {
-            const comfy = extractComfyUIMetadata(parsed);
+        // --- ComfyUI (prompt/graph or generation_data) ---
+        if (isComfyUIGraph(parsed)) {
+            var comfy = extractComfyUIMetadata(parsed);
             if (comfy) {
                 setAndResize(positivePrompt, unescapePromptString(comfy.prompt));
                 setAndResize(negativePrompt, unescapePromptString(comfy.negative));
-                const additionalPromptsTextarea = document.getElementById('additional-prompts');
+                var additionalPromptsTextarea = document.getElementById('additional-prompts');
                 if (additionalPromptsTextarea) setAndResize(additionalPromptsTextarea, '');
                 if (promptInfoList) promptInfoList.innerHTML = '';
                 if (modelInfoList) modelInfoList.innerHTML = '';
                 if (comfy.extra) addMetadataItem('Parameters', comfy.extra, promptInfoList);
                 addMetadataAsJsonBlock(parsed, promptInfoList, 'ComfyUI', sourceTag);
                 walkForModelInfo(parsed, function (k, v) { addModelInfoItem(k, v); });
+                var extraMetadataResources = [];
+                collectExtraMetadataResources(parsed, extraMetadataResources);
+                addCivitaiResourcesToModelInfo(extraMetadataResources);
                 setGenerationMetadataType('ComfyUI');
                 clearWarning();
                 found = true;
@@ -357,38 +398,42 @@ function distributePromptData(parsed, comment, sourceTag) {
             const negativeTexts = [];
             collectTextValuesWithNegatives(parsed, positiveTexts, negativeTexts);
 
-            // 2. Find all "wildcard_text" and "extraMetadata" (prompt only) values for #additional-prompts
+            // 2. Find wildcard_text, extraMetadata (prompt only), and extraMetadata.resources for Models
             const wildcardTexts = [];
             collectAllKeyValues(parsed, 'wildcard_text', wildcardTexts);
             const extraMetadataPrompts = [];
+            const extraMetadataResources = [];
             collectExtraMetadataPromptOnly(parsed, extraMetadataPrompts);
+            collectExtraMetadataResources(parsed, extraMetadataResources);
 
-            // Process extraMetadataPrompts to separate positive and negative prompts
+            // Process extraMetadataPrompts: negative -> negativeTexts, prompt -> positive prompt (not additional)
             for (let i = 0; i < extraMetadataPrompts.length; i++) {
                 const prompt = extraMetadataPrompts[i];
                 if (typeof prompt === 'string' && prompt.startsWith('__NEGATIVE__')) {
-                    // This is a negative prompt from extraMetadata
                     negativeTexts.push(prompt.substring('__NEGATIVE__'.length));
-                    // Remove from extraMetadataPrompts
                     extraMetadataPrompts.splice(i, 1);
-                    i--; // Adjust index since we removed an item
+                    i--;
                 }
             }
+            // extraMetadata "prompt" goes to positive prompt (e.g. JPEG UserComment / CivitAI)
+            extraMetadataPrompts.forEach(function (p) {
+                if (typeof p === 'string' && p.trim()) positiveTexts.push(p);
+            });
 
             setAndResize(positivePrompt, positiveTexts.map(unescapePromptString).join('\n'));
             setAndResize(negativePrompt, negativeTexts.map(unescapePromptString).join('\n'));
 
             const additionalPromptsTextarea = document.getElementById('additional-prompts');
             if (additionalPromptsTextarea) {
-                let combined = [...wildcardTexts, ...extraMetadataPrompts];
-                setAndResize(additionalPromptsTextarea, combined.join('\n'));
+                setAndResize(additionalPromptsTextarea, wildcardTexts.join('\n'));
             }
 
-            // 3. Additional Info as JSON block; Models list from model keys only
+            // 3. Additional Info as JSON block; Models from walkForModelInfo + extraMetadata.resources (Civitai version IDs)
             if (promptInfoList) promptInfoList.innerHTML = '';
             if (modelInfoList) modelInfoList.innerHTML = '';
             addMetadataAsJsonBlock(parsed, promptInfoList, 'ComfyUI', sourceTag);
             walkForModelInfo(parsed, function (k, v) { addModelInfoItem(k, v); });
+            addCivitaiResourcesToModelInfo(extraMetadataResources);
             setGenerationMetadataType('ComfyUI');
             clearWarning();
             found = true;
@@ -518,7 +563,6 @@ function parseExif(view, start) {
         0x010F: "Make",
         0x271: "Prompt",
         0x270: "Workflow"
-        // ... add more if needed
     };
     let namedTags = {};
     for (const tag in tags) {
@@ -742,6 +786,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (sunIcon) sunIcon.style.display = 'block';
                 if (moonIcon) moonIcon.style.display = 'none';
                 localStorage.setItem('theme', 'dark');
+            }
+        });
+    }
+
+    // --- Civitai toggle: enable/disable model lookup and linkification ---
+    const civitaiToggle = document.getElementById('civitai-toggle');
+    if (civitaiToggle) {
+        const civitaiIconOn = civitaiToggle.querySelector('.civitai-icon-on');
+        const civitaiIconOff = civitaiToggle.querySelector('.civitai-icon-off');
+        var saved = localStorage.getItem('civitaiCheckingEnabled');
+        if (saved === 'false') civitaiCheckingEnabled = false;
+        civitaiToggle.setAttribute('aria-pressed', civitaiCheckingEnabled ? 'true' : 'false');
+        if (civitaiIconOn) civitaiIconOn.style.display = civitaiCheckingEnabled ? '' : 'none';
+        if (civitaiIconOff) civitaiIconOff.style.display = civitaiCheckingEnabled ? 'none' : 'block';
+        civitaiToggle.addEventListener('click', function () {
+            civitaiCheckingEnabled = !civitaiCheckingEnabled;
+            localStorage.setItem('civitaiCheckingEnabled', civitaiCheckingEnabled ? 'true' : 'false');
+            civitaiToggle.setAttribute('aria-pressed', civitaiCheckingEnabled ? 'true' : 'false');
+            if (civitaiIconOn) civitaiIconOn.style.display = civitaiCheckingEnabled ? '' : 'none';
+            if (civitaiIconOff) civitaiIconOff.style.display = civitaiCheckingEnabled ? 'none' : 'block';
+            if (fileInput && fileInput.files && fileInput.files[0]) {
+                fileInput.dispatchEvent(new Event('change', { bubbles: true }));
             }
         });
     }
@@ -973,10 +1039,6 @@ function extractAndDisplayMetadata(file) {
             for (const item of basicMetadata) {
                 addMetadataItem(item.label, item.value);
             }
-            // Try to extract EXIF for JPEG/WEBP
-            if (file.type === 'image/jpeg' || file.type === 'image/webp') {
-                extractExifMetadata(file);
-            }
         };
         img.src = e.target.result;
     };
@@ -1038,35 +1100,6 @@ async function stripImageMetadata(file) {
     });
 }
 /////////////////////////////////////////////////////////////////////////////////
-
-// --- Minimal EXIF extraction for JPEG/WEBP (only a few fields, no library) ---
-function extractExifMetadata(file) {
-    const reader = new FileReader();
-    reader.onload = function (e) {
-        const view = new DataView(e.target.result);
-        // Check for JPEG EXIF header (0xFFD8)
-        if (view.getUint16(0, false) === 0xFFD8) {
-            let offset = 2;
-            const length = view.byteLength;
-            while (offset < length) {
-                if (view.getUint16(offset + 2, false) === 0x4578) {
-                    addMetadataItem('EXIF', 'EXIF data present');
-                    return;
-                }
-                if (view.getUint16(offset, false) === 0xFFE1) {
-                    addMetadataItem('EXIF', 'EXIF segment found');
-                    return;
-                }
-                offset += 2;
-            }
-            addMetadataItem('EXIF', 'No EXIF data found');
-        } else if (file.type === 'image/webp') {
-            // WebP EXIF is rare, just note presence
-            addMetadataItem('EXIF', 'EXIF metadata found');
-        }
-    };
-    reader.readAsArrayBuffer(file);
-}
 
 // --- Helper: Escape control characters inside JSON string literals (so JSON.parse can succeed) ---
 function escapeControlCharsInJsonString(str) {
@@ -1461,17 +1494,30 @@ function extractPngMetadata(file) {
                         text = raw.substring(sepIdx + 1);
                     }
                     if (!keyword) continue;
-                    console.log('PNG chunk:', chunkType, 'keyword:', keyword);
                     var keyLower = keyword.toLowerCase();
                     if (pngKeywords.indexOf(keyLower) === -1) continue;
-                    console.log('Found PNG metadata with keyword:', keyword);
                     window.setPromptInfoAvailable(true);
-                    var textToParse = text;
-                    if (text.includes('"sampler"') && text.includes('"signed_hash"')) {
-                        var jsonStartIndex = text.indexOf('{');
-                        if (jsonStartIndex > -1) textToParse = text.substring(jsonStartIndex);
+                    var parsed = null;
+                    if (keyLower === 'parameters') {
+                        // Always treat parameters as plain text (A1111)
+                    } else {
+                        var textToParse = text;
+                        if (text.includes('"sampler"') && text.includes('"signed_hash"')) {
+                            var jsonStartIndex = text.indexOf('{');
+                            if (jsonStartIndex > -1) textToParse = text.substring(jsonStartIndex);
+                        }
+                        parsed = safeJsonParse(textToParse);
+                        if (keyLower === 'prompt' && (parsed === null || parsed === undefined)) {
+                            var startObj = text.indexOf('{');
+                            var startArr = text.indexOf('[');
+                            var start = (startObj >= 0 && (startArr < 0 || startObj < startArr)) ? startObj : startArr;
+                            if (start >= 0) {
+                                var fromStart = text.substring(start);
+                                var retry = safeJsonParse(fromStart);
+                                if (retry !== null && typeof retry === 'object') parsed = retry;
+                            }
+                        }
                     }
-                    var parsed = safeJsonParse(textToParse);
                     if (!collectedByKeyword[keyLower]) collectedByKeyword[keyLower] = [];
                     collectedByKeyword[keyLower].push({ keyword: keyword, text: text, parsed: parsed });
                 }
@@ -1540,20 +1586,29 @@ function extractPngMetadata(file) {
                     }
                 }
             }
-            // 2c. ComfyUI: "prompt" or "parameters" chunk + "workflow" chunk — merge and distribute once
-            if (!found) {
-                var promptEntries = collectedByKeyword['prompt'] || collectedByKeyword['parameters'];
-                var workflowEntries = collectedByKeyword['workflow'];
-                if (promptEntries && promptEntries.length > 0 && workflowEntries && workflowEntries.length > 0) {
-                    var promptEntry = promptEntries[0];
-                    var workflowEntry = workflowEntries[0];
-                    var promptObj = promptEntry.parsed;
-                    var workflowObj = workflowEntry.parsed;
-                    if (promptObj && typeof promptObj === 'object' && !Array.isArray(promptObj) && workflowObj !== undefined && workflowObj !== null) {
-                        var merged = { prompt: promptObj, workflow: workflowObj };
-                        distributePromptData(merged, promptEntry.text, promptEntry.keyword);
-                        found = true;
+            // 2c. PNG "parameters" = always plain text → parse as A1111. Optionally add workflow block.
+            if (!found && collectedByKeyword['parameters'] && collectedByKeyword['parameters'].length > 0) {
+                var paramsEntry = collectedByKeyword['parameters'][0];
+                var paramsText = typeof paramsEntry.text === 'string' ? stripSurroundingQuotes(paramsEntry.text.trim()) : '';
+                if (paramsText) {
+                    parseAndDisplayUserComment(paramsText);
+                    setGenerationMetadataType('A1111');
+                    var workflowEntries = collectedByKeyword['workflow'];
+                    if (workflowEntries && workflowEntries.length > 0 && workflowEntries[0].parsed != null && typeof workflowEntries[0].parsed === 'object') {
+                        addMetadataAsJsonBlock({ workflow: workflowEntries[0].parsed }, promptInfoList, 'ComfyUI', 'workflow');
                     }
+                    found = true;
+                }
+            }
+            // 2c continued. ComfyUI JSON "prompt" chunk + workflow — merge and distribute.
+            if (!found && collectedByKeyword['prompt'] && collectedByKeyword['prompt'].length > 0 && collectedByKeyword['workflow'] && collectedByKeyword['workflow'].length > 0) {
+                var promptEntry = collectedByKeyword['prompt'][0];
+                var workflowEntry = collectedByKeyword['workflow'][0];
+                var promptObj = promptEntry.parsed;
+                var workflowObj = workflowEntry.parsed;
+                if (promptObj && typeof promptObj === 'object' && workflowObj != null && typeof workflowObj === 'object') {
+                    distributePromptData({ prompt: promptObj, workflow: workflowObj }, promptEntry.text, promptEntry.keyword);
+                    found = true;
                 }
             }
             if (!found) {
@@ -1698,6 +1753,42 @@ function collectAllKeyValues(obj, targetKey, resultArr) {
     }
 }
 
+// --- Helper: Collect "resources" (modelVersionId + strength) from any "extraMetadata" in a nested structure ---
+function collectExtraMetadataResources(obj, resultArr) {
+    if (typeof obj !== 'object' || obj === null) return;
+    if (Array.isArray(obj)) {
+        obj.forEach(item => collectExtraMetadataResources(item, resultArr));
+        return;
+    }
+    for (const key in obj) {
+        if (!obj.hasOwnProperty(key)) continue;
+        if (key === 'extraMetadata') {
+            var em = obj[key];
+            var parsed = null;
+            if (typeof em === 'string') {
+                try {
+                    var sanitized = escapeControlCharsInJsonString(em);
+                    parsed = JSON.parse(sanitized);
+                } catch (e) { /* ignore */ }
+            } else if (typeof em === 'object' && em !== null) {
+                parsed = em;
+            }
+            if (parsed && Array.isArray(parsed.resources)) {
+                parsed.resources.forEach(function (r) {
+                    if (r && (r.modelVersionId != null || r.id != null)) {
+                        resultArr.push({
+                            modelVersionId: r.modelVersionId != null ? r.modelVersionId : r.id,
+                            strength: r.strength != null ? r.strength : r.weight
+                        });
+                    }
+                });
+            }
+        } else if (typeof obj[key] === 'object') {
+            collectExtraMetadataResources(obj[key], resultArr);
+        }
+    }
+}
+
 // --- Helper: Collect only the "prompt" property from any "extraMetadata" object in a nested structure ---
 function collectExtraMetadataPromptOnly(obj, resultArr) {
     if (typeof obj !== 'object' || obj === null) return;
@@ -1814,6 +1905,9 @@ function addMetadataAsJsonBlock(parsed, listElement, formatName, sourceLabel) {
         for (var i = 0; i < fieldNames.length; i++) {
             var val = getValueIgnoreCase(parsed, fieldNames[i]);
             if (val !== undefined && val !== null) {
+                if (typeof val === 'string' && (fieldNames[i] === 'prompt' || fieldNames[i] === 'parameters')) {
+                    val = stripSurroundingQuotes(val.trim());
+                }
                 addJsonBlockWithLabel(formatFieldDisplayLabel(fieldNames[i]), val, listElement);
                 added++;
             }
@@ -1949,6 +2043,22 @@ function extractJsonValue(str, startIdx) {
 }
 
 /**
+ * Strip leading/trailing double quotes (ASCII or Unicode), single quotes, and unescape \" inside.
+ * Strips even if only one end has a quote.
+ * Handles multiple consecutive quotes at start/end.
+ */
+function stripSurroundingQuotes(str) {
+    if (typeof str !== 'string' || str.length === 0) return str;
+    var isQuote = function (c) {
+        return c === '"' || c === "'" || c === '\u201C' || c === '\u201D' || c === '\u201E' || c === '\u2018' || c === '\u2019';
+    };
+    while (str.length > 0 && isQuote(str.charAt(0))) str = str.slice(1);
+    while (str.length > 0 && isQuote(str.charAt(str.length - 1))) str = str.slice(0, -1);
+    str = str.replace(/\\"/g, '"');
+    return str;
+}
+
+/**
  * Parse the UserComment string and distribute to UI elements.
  * - All text until "Negative prompt:" (excluded) -> #positive-prompt
  * - "Negative prompt:" until "Steps:" (excluded) -> #negative-prompt
@@ -1959,26 +2069,23 @@ function extractJsonValue(str, startIdx) {
  */
 function parseAndDisplayUserComment(comment) {
     window.setPromptInfoAvailable(true);
-    // Remove "UNICODE" at the start if present
     comment = comment.trim();
+    comment = stripSurroundingQuotes(comment);
     comment = unescapePromptString(comment);
     if (comment.startsWith('UNICODE')) {
         comment = comment.substring('UNICODE'.length).trim();
     }
-    // Find "Negative prompt:" and "Steps:"
-    const negPromptIdx = comment.indexOf('Negative prompt:');
-    const stepsIdx = comment.indexOf('Steps:');
+    // Find "Negative prompt:" and "Steps:" (case-insensitive, allow optional spaces)
+    const negPromptIdx = comment.search(/\bnegative\s+prompt\s*:/i);
+    const stepsIdx = comment.search(/\bsteps\s*:/i);
     let positive = '', negative = '', additional = '';
     if (negPromptIdx !== -1) {
         positive = comment.substring(0, negPromptIdx).trim();
-        if (stepsIdx !== -1 && stepsIdx > negPromptIdx) {
-            negative = comment.substring(negPromptIdx + 'Negative prompt:'.length, stepsIdx).trim();
-            additional = comment.substring(stepsIdx).trim();
-        } else {
-            negative = comment.substring(negPromptIdx + 'Negative prompt:'.length).trim();
-        }
+        var negColonIdx = comment.indexOf(':', negPromptIdx);
+        var negEnd = (stepsIdx !== -1 && stepsIdx > negPromptIdx) ? stepsIdx : comment.length;
+        negative = negColonIdx !== -1 ? comment.substring(negColonIdx + 1, negEnd).trim() : '';
+        if (stepsIdx !== -1 && stepsIdx > negPromptIdx) additional = comment.substring(stepsIdx).trim();
     } else {
-        // If no negative prompt, treat all as positive
         if (stepsIdx !== -1) {
             positive = comment.substring(0, stepsIdx).trim();
             additional = comment.substring(stepsIdx).trim();
@@ -2030,9 +2137,7 @@ function parseAndDisplayUserComment(comment) {
     }
 }
 
-/**
- * Split the additional prompt info into items, respecting commas inside parentheses/brackets/braces and double-quoted strings.
- */
+// Split additional prompt info into items, respecting commas inside parentheses/brackets/braces and double-quoted strings.
 function splitPromptInfo(str) {
     const result = [];
     let current = '';
@@ -2064,8 +2169,40 @@ function splitPromptInfo(str) {
     return result;
 }
 
-// --- Civitai: resolve hash to model page URL (GET /api/v1/model-versions/by-hash/:hash) ---
+// --- Civitai: resolve hash or modelVersionId to model page URL ---
 var CIVITAI_API_BASE = 'https://civitai.com/api/v1';
+function fetchCivitaiModelByVersionId(modelVersionId, callback) {
+    var id = modelVersionId != null ? Number(modelVersionId) : NaN;
+    if (id <= 0 || !isFinite(id)) {
+        callback(new Error('Invalid modelVersionId'));
+        return;
+    }
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', CIVITAI_API_BASE + '/model-versions/' + id, true);
+    xhr.onload = function () {
+        if (xhr.status !== 200) {
+            callback(new Error('Civitai API returned ' + xhr.status));
+            return;
+        }
+        try {
+            var data = JSON.parse(xhr.responseText);
+            var modelId = data.modelId || (data.model && data.model.id);
+            var versionId = data.id;
+            var modelName = (data.model && data.model.name) ? data.model.name : '';
+            var versionName = data.name || '';
+            var displayName = modelName || versionName || ('v' + versionId);
+            if (modelId != null && versionId != null) {
+                callback(null, { modelId: modelId, modelVersionId: versionId, modelName: modelName, versionName: versionName, displayName: displayName });
+            } else {
+                callback(new Error('Missing modelId or version id'));
+            }
+        } catch (e) {
+            callback(e);
+        }
+    };
+    xhr.onerror = function () { callback(new Error('Network error')); };
+    xhr.send();
+}
 function fetchCivitaiModelByHash(hash, callback) {
     if (!hash || typeof hash !== 'string') {
         callback(new Error('Invalid hash'));
@@ -2152,7 +2289,23 @@ function parseHashesForCivitai(label, value) {
     return out;
 }
 
-/** Normalize model-related keys to consistent display labels for the Models section. */
+// Parse value for Civitai URNs (e.g. urn:air:sdxl:checkpoint:civitai:1689192@1911770)
+// Model version ID is the number after @. Returns [{ versionId, strength }]
+function parseCivitaiUrnsInValue(value) {
+    var out = [];
+    if (value == null) return out;
+    var str = typeof value === 'string' ? value.trim() : String(value);
+    if (!str) return out;
+    var re = /civitai:(\d+)(?:@(\d+))?/g;
+    var m;
+    while ((m = re.exec(str)) !== null) {
+        var versionId = m[2] != null ? parseInt(m[2], 10) : parseInt(m[1], 10);
+        if (!isNaN(versionId)) out.push({ versionId: versionId, strength: null });
+    }
+    return out;
+}
+
+// Normalize model-related keys to consistent display labels for the Models section
 function normalizeModelLabel(key) {
     if (!key || typeof key !== 'string') return key;
     var k = key.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -2168,11 +2321,11 @@ function normalizeModelLabel(key) {
     return key.replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); });
 }
 
-/** Add a model info row with normalized label to model-info-list. Linkifies Model hash and Lora hashes to Civitai. */
+// Add a model info row with normalized label to model-info-list.
 function addModelInfoItem(key, value) {
     if (!modelInfoList) return;
     var label = normalizeModelLabel(key);
-    if (label === 'Model hash' || label === 'Lora hashes') {
+    if (civitaiCheckingEnabled && (label === 'Model hash' || label === 'Lora hashes')) {
         var entries = parseHashesForCivitai(label, value);
         if (entries.length === 0) {
             addMetadataItem(label, value, modelInfoList);
@@ -2206,6 +2359,25 @@ function addModelInfoItem(key, value) {
         modelInfoList.appendChild(li);
         return;
     }
+    if (civitaiCheckingEnabled) {
+        var civitaiEntries = parseCivitaiUrnsInValue(value);
+        if (civitaiEntries.length > 0) {
+            var li = document.createElement('li');
+            li.innerHTML = '<strong class="unselectable-label">' + escapeHtml(label) + ':</strong> ';
+            var valueContainer = document.createElement('span');
+            valueContainer.className = 'civitai-hash-links';
+            civitaiEntries.forEach(function (entry, idx) {
+                if (idx > 0) valueContainer.appendChild(document.createTextNode(', '));
+                var span = document.createElement('span');
+                span.setAttribute('data-version-id', String(entry.versionId));
+                valueContainer.appendChild(span);
+                resolveCivitaiVersionSpan(span, entry.versionId, entry.strength);
+            });
+            li.appendChild(valueContainer);
+            modelInfoList.appendChild(li);
+            return;
+        }
+    }
     addMetadataItem(label, value, modelInfoList);
 }
 
@@ -2226,6 +2398,47 @@ function resolveCivitaiHashSpan(span, hash, name) {
     });
 }
 
+function resolveCivitaiVersionSpan(span, modelVersionId, strength) {
+    span.textContent = '…';
+    fetchCivitaiModelByVersionId(modelVersionId, function (err, result) {
+        if (err || !result) {
+            span.textContent = 'v' + modelVersionId + (strength != null ? ' (' + strength + ')' : '');
+            return;
+        }
+        var url = 'https://civitai.com/models/' + result.modelId + '?modelVersionId=' + result.modelVersionId;
+        var display = result.displayName + (strength != null && strength !== '' ? ' (' + strength + ')' : '');
+        var a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = display;
+        span.textContent = '';
+        span.appendChild(a);
+    });
+}
+
+function addCivitaiResourcesToModelInfo(resources) {
+    if (!modelInfoList || !resources || resources.length === 0 || !civitaiCheckingEnabled) return;
+    var li = document.createElement('li');
+    li.innerHTML = '<strong class="unselectable-label">Civitai resources:</strong> ';
+    var ul = document.createElement('ul');
+    ul.style.cssText = 'margin:0 0 0 1em;padding:0;list-style:none;';
+    resources.forEach(function (r) {
+        var strength = r.strength != null ? r.strength : r.weight;
+        var vid = r.modelVersionId != null ? r.modelVersionId : r.id;
+        if (vid == null) return;
+        var itemLi = document.createElement('li');
+        var span = document.createElement('span');
+        span.className = 'civitai-hash-links';
+        span.setAttribute('data-version-id', String(vid));
+        itemLi.appendChild(span);
+        ul.appendChild(itemLi);
+        resolveCivitaiVersionSpan(span, vid, strength);
+    });
+    li.appendChild(ul);
+    modelInfoList.appendChild(li);
+}
+
 /**
  * Add a metadata item to a given list element, formatting with <strong> for label.
  * If no list element is provided, defaults to metadataList.
@@ -2233,7 +2446,7 @@ function resolveCivitaiHashSpan(span, hash, name) {
  */
 function addMetadataItem(label, value, listElement) {
     var targetList = listElement || metadataList;
-    if (targetList === modelInfoList && (label === 'Model hash' || label === 'Lora hashes')) {
+    if (targetList === modelInfoList && civitaiCheckingEnabled && (label === 'Model hash' || label === 'Lora hashes')) {
         var entries = parseHashesForCivitai(label, value);
         if (entries.length > 0) {
             var li = document.createElement('li');
@@ -2260,6 +2473,25 @@ function addMetadataItem(label, value, listElement) {
                 });
                 valueContainer.appendChild(ul);
             }
+            li.appendChild(valueContainer);
+            targetList.appendChild(li);
+            return;
+        }
+    }
+    if (targetList === modelInfoList && civitaiCheckingEnabled && value != null) {
+        var civitaiEntries = parseCivitaiUrnsInValue(value);
+        if (civitaiEntries.length > 0) {
+            var li = document.createElement('li');
+            li.innerHTML = '<strong class="unselectable-label">' + escapeHtml(label) + ':</strong> ';
+            var valueContainer = document.createElement('span');
+            valueContainer.className = 'civitai-hash-links';
+            civitaiEntries.forEach(function (entry, idx) {
+                if (idx > 0) valueContainer.appendChild(document.createTextNode(', '));
+                var span = document.createElement('span');
+                span.setAttribute('data-version-id', String(entry.versionId));
+                valueContainer.appendChild(span);
+                resolveCivitaiVersionSpan(span, entry.versionId, entry.strength);
+            });
             li.appendChild(valueContainer);
             targetList.appendChild(li);
             return;
