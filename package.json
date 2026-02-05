@@ -1,6 +1,6 @@
 {
   "name": "sd-metadata-extractor",
-  "version": "1.2.0",
+  "version": "1.1.1",
   "description": "Metadata extractor for AI-generated images (Stable Diffusion, NovelAI, ComfyUI, etc.)",
   "main": "index.js",
   "scripts": {
