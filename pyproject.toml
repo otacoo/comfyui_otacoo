@@ -1,7 +1,7 @@
 [project]
 name = "comfyui_metadata_extract"
-description = "Extract generation info from PNG and JPEG images, A1111/Forge, NovelAI, InvokeAI, Midjourney and (most) ComfyUI types of metadata."
-version = "1.2.0"
+description = "Standalone tool to extract generation info from PNG, JPEG, WebP images, works for A1111/Forge, NovelAI, InvokeAI, Midjourney and (most) ComfyUI types of metadata."
+version = "1.2.1"
 license = {file = "LICENSE"}
 
 [project.urls]
@@ -10,5 +10,5 @@ Repository = "https://github.com/otacoo/comfyui_metadata_extract"
 
 [tool.comfy]
 PublisherId = "otacoo"
-DisplayName = "comfyui_metadata_extract"
+DisplayName = "Metadata-Extractor"
 Icon = "https://avatars.githubusercontent.com/u/208893667"
